@@ -6,6 +6,7 @@ import com.techtorque.appointment_service.repository.AppointmentRepository;
 import com.techtorque.appointment_service.service.AppointmentService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,38 +22,58 @@ public class AppointmentServiceImpl implements AppointmentService {
 
   @Override
   public Appointment bookAppointment(/* AppointmentRequestDto dto, */ String customerId) {
-    // TODO: Developer will implement this logic.
-    // 1. Create a new Appointment entity from the DTO.
-    // 2. Set the customerId.
-    // 3. Set the initial status to PENDING.
-    // 4. Save using the repository and return the new appointment.
+    // TODO: Logic for booking
     return null;
   }
 
   @Override
   public List<Appointment> getAppointmentsForCustomer(String customerId) {
-    // TODO: Developer will implement this logic.
-    // 1. Call appointmentRepository.findByCustomerIdOrderByRequestedDateTimeDesc(customerId).
-    // 2. Return the list.
+    // TODO: Logic for listing customer appointments
     return List.of();
   }
 
   @Override
   public Optional<Appointment> getAppointmentDetails(String appointmentId, String userId, String userRole) {
-    // TODO: Developer will implement this logic.
-    // 1. If userRole is "CUSTOMER", call appointmentRepository.findByIdAndCustomerId(appointmentId, userId).
-    // 2. If userRole is "EMPLOYEE", find the appointment and verify the employee is assigned or has permission.
-    // 3. If userRole is "ADMIN", they can view any appointment.
+    // TODO: Logic for getting details with role-based access
     return Optional.empty();
   }
 
   @Override
   public Appointment updateAppointmentStatus(String appointmentId, AppointmentStatus newStatus, String employeeId) {
-    // TODO: Developer will implement this logic.
-    // 1. Find the appointment by ID. Throw exception if not found.
-    // 2. Verify the employee has permission to update this appointment.
-    // 3. Update the status and save.
-    // 4. Return the updated appointment.
+    // TODO: Logic for updating status
+    return null;
+  }
+
+  @Override
+  public Appointment updateAppointment(String appointmentId, /* AppointmentUpdateDto dto, */ String customerId) {
+    // TODO: Find appointment by ID and customer ID to verify ownership.
+    // If found, update the fields from the DTO and save.
+    // Throw exception if not found.
+    return null;
+  }
+
+  @Override
+  public void cancelAppointment(String appointmentId, String customerId) {
+    // TODO: Find appointment by ID and customer ID to verify ownership.
+    // If found, either delete it or update its status to CANCELLED.
+    // Throw exception if not found.
+  }
+
+  @Override
+  public Object checkAvailability(LocalDate date, String serviceType, int duration) {
+    // TODO: This is a complex query.
+    // 1. Get business hours/rules (maybe from Admin Service in the future).
+    // 2. Find all existing appointments for the given date.
+    // 3. Calculate the gaps between appointments to find available slots.
+    // 4. Return a list of available slots.
+    return null;
+  }
+
+  @Override
+  public Object getEmployeeSchedule(String employeeId, LocalDate date) {
+    // TODO: Use the repository to find all appointments assigned to the employee for the given date.
+    // E.g., appointmentRepository.findByAssignedEmployeeIdAndRequestedDateTimeBetween(...)
+    // Return a formatted list of scheduled items.
     return null;
   }
 }
