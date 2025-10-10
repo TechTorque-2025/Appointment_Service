@@ -1,4 +1,4 @@
-package com.techtorque.appointment_service.config; // <-- Change this package name for each service
+package com.techtorque.appointment_service.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
