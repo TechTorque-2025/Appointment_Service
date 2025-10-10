@@ -1,5 +1,7 @@
 # 🗓️ Appointment & Scheduling Service
 
+[![Build and Test Appointment Service](https://github.com/TechTorque-2025/Appointment_Service/actions/workflows/buildtest.yaml/badge.svg)](https://github.com/TechTorque-2025/Appointment_Service/actions/workflows/buildtest.yaml)
+
 This microservice handles all aspects of appointment booking and work scheduling.
 
 **Assigned Team:** Aditha, Chamodi
