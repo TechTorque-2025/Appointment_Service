@@ -1,4 +1,4 @@
-package com.techtorque.appointment_service.config;
+package com.techtorque.appointment_service.config; // <-- Change this package name for each service
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,17 +11,33 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity(prePostEnabled = true) // This enables the @PreAuthorize annotations
+@EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
-  @Bean
-  public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-    http
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            // Disable CSRF protection for stateless APIs
             .csrf(csrf -> csrf.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .addFilterBefore(new GatewayHeaderFilter(), UsernamePasswordAuthenticationFilter.class)
-            .authorizeHttpRequests(authz -> authz.anyRequest().authenticated());
 
-    return http.build();
-  }
+            // Set session management to STATELESS
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            
+            // --- ADD THESE TWO LINES ---
+            // Explicitly disable the form login page
+            .formLogin(formLogin -> formLogin.disable())
+            // Explicitly disable HTTP Basic authentication
+            .httpBasic(httpBasic -> httpBasic.disable())
+            
+            // Set up authorization rules
+            .authorizeHttpRequests(authz -> authz
+                // All other requests must be authenticated
+                .anyRequest().authenticated()
+            )
+
+            // Add our custom filter to read headers from the Gateway
+            .addFilterBefore(new GatewayHeaderFilter(), UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
 }
