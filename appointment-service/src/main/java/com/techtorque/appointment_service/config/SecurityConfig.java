@@ -14,30 +14,41 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        http
-            // Disable CSRF protection for stateless APIs
-            .csrf(csrf -> csrf.disable())
+  // A more comprehensive whitelist for Swagger/OpenAPI, based on the auth-service config.
+  private static final String[] SWAGGER_WHITELIST = {
+    "/v3/api-docs/**",
+    "/swagger-ui/**",
+    "/swagger-ui.html",
+    "/swagger-resources/**",
+    "/webjars/**",
+    "/api-docs/**"
+  };
 
-            // Set session management to STATELESS
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+  @Bean
+  public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    http
+      // Disable CSRF protection for stateless APIs
+      .csrf(csrf -> csrf.disable())
+
+      // Set session management to STATELESS
+      .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             
-            // --- ADD THESE TWO LINES ---
-            // Explicitly disable the form login page
-            .formLogin(formLogin -> formLogin.disable())
-            // Explicitly disable HTTP Basic authentication
-            .httpBasic(httpBasic -> httpBasic.disable())
+      // Explicitly disable form login and HTTP Basic authentication
+      .formLogin(formLogin -> formLogin.disable())
+      .httpBasic(httpBasic -> httpBasic.disable())
             
-            // Set up authorization rules
-            .authorizeHttpRequests(authz -> authz
-                // All other requests must be authenticated
-                .anyRequest().authenticated()
-            )
+      // Set up authorization rules
+      .authorizeHttpRequests(authz -> authz
+        // Permit all requests to the Swagger UI and API docs paths
+        .requestMatchers(SWAGGER_WHITELIST).permitAll()
+                
+        // All other requests must be authenticated
+        .anyRequest().authenticated()
+      )
 
-            // Add our custom filter to read headers from the Gateway
-            .addFilterBefore(new GatewayHeaderFilter(), UsernamePasswordAuthenticationFilter.class);
+      // Add our custom filter to read headers from the Gateway
+      .addFilterBefore(new GatewayHeaderFilter(), UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
+    return http.build();
+  }
 }
