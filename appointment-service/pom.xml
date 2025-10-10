@@ -79,7 +79,7 @@
 		</dependency>
 
         <!--        OpenAPI dependency-->
-        <!--        API Doc can be accessed from http://localhost:port/swagger-ui/index.html-->
+	    <!--        API Doc can be accessed from http://localhost:8083/swagger-ui/index.html -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
