@@ -1,26 +1,25 @@
 package com.techtorque.appointment_service.service;
 
-import com.techtorque.appointment_service.entity.Appointment;
+import com.techtorque.appointment_service.dto.*;
 import com.techtorque.appointment_service.entity.AppointmentStatus;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Optional;
 
 public interface AppointmentService {
 
-  Appointment bookAppointment(/* AppointmentRequestDto dto, */ String customerId);
+  AppointmentResponseDto bookAppointment(AppointmentRequestDto dto, String customerId);
 
-  List<Appointment> getAppointmentsForCustomer(String customerId);
+  List<AppointmentResponseDto> getAppointmentsForUser(String userId, String userRoles);
 
-  Optional<Appointment> getAppointmentDetails(String appointmentId, String userId, String userRole);
+  AppointmentResponseDto getAppointmentDetails(String appointmentId, String userId, String userRoles);
 
-  Appointment updateAppointment(String appointmentId, /* AppointmentUpdateDto dto, */ String customerId);
+  AppointmentResponseDto updateAppointment(String appointmentId, AppointmentUpdateDto dto, String customerId);
 
   void cancelAppointment(String appointmentId, String customerId);
 
-  Appointment updateAppointmentStatus(String appointmentId, AppointmentStatus newStatus, String employeeId);
+  AppointmentResponseDto updateAppointmentStatus(String appointmentId, AppointmentStatus newStatus, String employeeId);
 
-  Object checkAvailability(LocalDate date, String serviceType, int duration); // Return type can be a DTO
+  AvailabilityResponseDto checkAvailability(LocalDate date, String serviceType, int duration);
 
-  Object getEmployeeSchedule(String employeeId, LocalDate date); // Return type can be a DTO
+  ScheduleResponseDto getEmployeeSchedule(String employeeId, LocalDate date);
 }
