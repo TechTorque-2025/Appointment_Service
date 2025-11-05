@@ -1,6 +1,8 @@
 package com.techtorque.appointment_service.controller;
 
-import com.techtorque.appointment_service.dto.*;
+import com.techtorque.appointment_service.dto.request.*;
+import com.techtorque.appointment_service.dto.response.*;
+import com.techtorque.appointment_service.entity.AppointmentStatus;
 import com.techtorque.appointment_service.service.AppointmentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -11,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 @RestController
@@ -36,13 +39,26 @@ public class AppointmentController {
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
-  @Operation(summary = "List appointments for the current user (customer or employee)")
+  @Operation(summary = "List appointments with optional filters")
   @GetMapping
   @PreAuthorize("hasAnyRole('CUSTOMER', 'EMPLOYEE', 'ADMIN')")
   public ResponseEntity<List<AppointmentResponseDto>> listAppointments(
           @RequestHeader("X-User-Subject") String userId,
-          @RequestHeader("X-User-Roles") String userRoles) {
+          @RequestHeader("X-User-Roles") String userRoles,
+          @RequestParam(required = false) String vehicleId,
+          @RequestParam(required = false) AppointmentStatus status,
+          @RequestParam(required = false) LocalDate fromDate,
+          @RequestParam(required = false) LocalDate toDate) {
 
+    // If filters are provided, use filtered search
+    if (vehicleId != null || status != null || fromDate != null || toDate != null) {
+      String customerId = userRoles.contains("CUSTOMER") ? userId : null;
+      List<AppointmentResponseDto> appointments = appointmentService.getAppointmentsWithFilters(
+          customerId, vehicleId, status, fromDate, toDate);
+      return ResponseEntity.ok(appointments);
+    }
+
+    // Otherwise use role-based default listing
     List<AppointmentResponseDto> appointments = appointmentService.getAppointmentsForUser(userId, userRoles);
     return ResponseEntity.ok(appointments);
   }
@@ -97,8 +113,8 @@ public class AppointmentController {
 
   @Operation(summary = "Check for available appointment slots (public endpoint)")
   @GetMapping("/availability")
-  @PreAuthorize("permitAll()") // This endpoint is public as per the API design
-  @SecurityRequirement(name = "bearerAuth", scopes = {}) // Override class-level security
+  @PreAuthorize("permitAll()")
+  @SecurityRequirement(name = "bearerAuth", scopes = {})
   public ResponseEntity<AvailabilityResponseDto> checkAvailability(
           @RequestParam LocalDate date,
           @RequestParam String serviceType,
@@ -117,5 +133,18 @@ public class AppointmentController {
 
     ScheduleResponseDto schedule = appointmentService.getEmployeeSchedule(employeeId, date);
     return ResponseEntity.ok(schedule);
+  }
+
+  @Operation(summary = "Get monthly calendar view with appointments (employee/admin only)")
+  @GetMapping("/calendar")
+  @PreAuthorize("hasAnyRole('EMPLOYEE', 'ADMIN')")
+  public ResponseEntity<CalendarResponseDto> getMonthlyCalendar(
+          @RequestParam int year,
+          @RequestParam int month,
+          @RequestHeader("X-User-Roles") String userRoles) {
+
+    YearMonth yearMonth = YearMonth.of(year, month);
+    CalendarResponseDto calendar = appointmentService.getMonthlyCalendar(yearMonth, userRoles);
+    return ResponseEntity.ok(calendar);
   }
 }
