@@ -1,22 +1,16 @@
 package com.techtorque.appointment_service.service.impl;
 
-import com.techtorque.appointment_service.dto.*;
-import com.techtorque.appointment_service.entity.Appointment;
-import com.techtorque.appointment_service.entity.AppointmentStatus;
-import com.techtorque.appointment_service.exception.AppointmentNotFoundException;
-import com.techtorque.appointment_service.exception.InvalidStatusTransitionException;
-import com.techtorque.appointment_service.exception.UnauthorizedAccessException;
-import com.techtorque.appointment_service.repository.AppointmentRepository;
+import com.techtorque.appointment_service.dto.request.*;
+import com.techtorque.appointment_service.dto.response.*;
+import com.techtorque.appointment_service.entity.*;
+import com.techtorque.appointment_service.exception.*;
+import com.techtorque.appointment_service.repository.*;
 import com.techtorque.appointment_service.service.AppointmentService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.time.*;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,19 +19,37 @@ import java.util.stream.Collectors;
 public class AppointmentServiceImpl implements AppointmentService {
 
   private final AppointmentRepository appointmentRepository;
+  private final ServiceTypeRepository serviceTypeRepository;
+  private final ServiceBayRepository serviceBayRepository;
+  private final BusinessHoursRepository businessHoursRepository;
+  private final HolidayRepository holidayRepository;
 
-  // Business hours configuration
-  private static final LocalTime BUSINESS_START = LocalTime.of(8, 0);
-  private static final LocalTime BUSINESS_END = LocalTime.of(18, 0);
   private static final int SLOT_INTERVAL_MINUTES = 30;
 
-  public AppointmentServiceImpl(AppointmentRepository appointmentRepository) {
+  public AppointmentServiceImpl(
+      AppointmentRepository appointmentRepository,
+      ServiceTypeRepository serviceTypeRepository,
+      ServiceBayRepository serviceBayRepository,
+      BusinessHoursRepository businessHoursRepository,
+      HolidayRepository holidayRepository) {
     this.appointmentRepository = appointmentRepository;
+    this.serviceTypeRepository = serviceTypeRepository;
+    this.serviceBayRepository = serviceBayRepository;
+    this.businessHoursRepository = businessHoursRepository;
+    this.holidayRepository = holidayRepository;
   }
 
   @Override
   public AppointmentResponseDto bookAppointment(AppointmentRequestDto dto, String customerId) {
     log.info("Booking appointment for customer: {}", customerId);
+
+    ServiceType serviceType = serviceTypeRepository.findByNameAndActiveTrue(dto.getServiceType())
+        .orElseThrow(() -> new IllegalArgumentException("Invalid service type: " + dto.getServiceType()));
+
+    validateAppointmentDateTime(dto.getRequestedDateTime(), serviceType.getEstimatedDurationMinutes());
+
+    String confirmationNumber = generateConfirmationNumber();
+    String assignedBayId = findAvailableBay(dto.getRequestedDateTime(), serviceType.getEstimatedDurationMinutes());
 
     Appointment appointment = Appointment.builder()
         .customerId(customerId)
@@ -46,10 +58,12 @@ public class AppointmentServiceImpl implements AppointmentService {
         .requestedDateTime(dto.getRequestedDateTime())
         .specialInstructions(dto.getSpecialInstructions())
         .status(AppointmentStatus.PENDING)
+        .confirmationNumber(confirmationNumber)
+        .assignedBayId(assignedBayId)
         .build();
 
     Appointment savedAppointment = appointmentRepository.save(appointment);
-    log.info("Appointment booked successfully with ID: {}", savedAppointment.getId());
+    log.info("Appointment booked successfully with confirmation: {}", confirmationNumber);
 
     return convertToDto(savedAppointment);
   }
@@ -61,20 +75,30 @@ public class AppointmentServiceImpl implements AppointmentService {
     List<Appointment> appointments;
 
     if (userRoles.contains("ADMIN")) {
-      // Admins can see all appointments
       appointments = appointmentRepository.findAll();
     } else if (userRoles.contains("EMPLOYEE")) {
-      // Employees see appointments assigned to them
       appointments = appointmentRepository.findByAssignedEmployeeIdAndRequestedDateTimeBetween(
           userId, LocalDateTime.now().minusYears(1), LocalDateTime.now().plusYears(1));
     } else {
-      // Customers see their own appointments
       appointments = appointmentRepository.findByCustomerIdOrderByRequestedDateTimeDesc(userId);
     }
 
-    return appointments.stream()
-        .map(this::convertToDto)
-        .collect(Collectors.toList());
+    return appointments.stream().map(this::convertToDto).collect(Collectors.toList());
+  }
+
+  @Override
+  public List<AppointmentResponseDto> getAppointmentsWithFilters(
+      String customerId, String vehicleId, AppointmentStatus status, 
+      LocalDate fromDate, LocalDate toDate) {
+    log.info("Fetching appointments with filters");
+
+    LocalDateTime fromDateTime = fromDate != null ? fromDate.atStartOfDay() : null;
+    LocalDateTime toDateTime = toDate != null ? toDate.atTime(23, 59, 59) : null;
+
+    List<Appointment> appointments = appointmentRepository.findWithFilters(
+        customerId, vehicleId, status, fromDateTime, toDateTime);
+
+    return appointments.stream().map(this::convertToDto).collect(Collectors.toList());
   }
 
   @Override
@@ -84,7 +108,6 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment appointment = appointmentRepository.findById(appointmentId)
         .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
 
-    // Check access permissions
     boolean isAdmin = userRoles.contains("ADMIN");
     boolean isAssignedEmployee = userRoles.contains("EMPLOYEE") && userId.equals(appointment.getAssignedEmployeeId());
     boolean isCustomer = userId.equals(appointment.getCustomerId());
@@ -103,16 +126,16 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, customerId)
         .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, customerId));
 
-    // Only allow updates if appointment is PENDING or CONFIRMED
     if (appointment.getStatus() != AppointmentStatus.PENDING &&
         appointment.getStatus() != AppointmentStatus.CONFIRMED) {
-      throw new InvalidStatusTransitionException(
-          "Cannot update appointment with status: " + appointment.getStatus());
+      throw new InvalidStatusTransitionException("Cannot update appointment with status: " + appointment.getStatus());
     }
 
-    // Update fields if provided
     if (dto.getRequestedDateTime() != null) {
+      validateAppointmentDateTime(dto.getRequestedDateTime(), 60);
       appointment.setRequestedDateTime(dto.getRequestedDateTime());
+      String newBayId = findAvailableBay(dto.getRequestedDateTime(), 60);
+      appointment.setAssignedBayId(newBayId);
     }
     if (dto.getSpecialInstructions() != null) {
       appointment.setSpecialInstructions(dto.getSpecialInstructions());
@@ -131,7 +154,6 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, customerId)
         .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, customerId));
 
-    // Only allow cancellation if not already completed or cancelled
     if (appointment.getStatus() == AppointmentStatus.COMPLETED) {
       throw new InvalidStatusTransitionException("Cannot cancel a completed appointment");
     }
@@ -149,10 +171,8 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment appointment = appointmentRepository.findById(appointmentId)
         .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
 
-    // Validate status transition
     validateStatusTransition(appointment.getStatus(), newStatus);
 
-    // Assign employee if transitioning to CONFIRMED or IN_PROGRESS
     if ((newStatus == AppointmentStatus.CONFIRMED || newStatus == AppointmentStatus.IN_PROGRESS) &&
         appointment.getAssignedEmployeeId() == null) {
       appointment.setAssignedEmployeeId(employeeId);
@@ -170,22 +190,26 @@ public class AppointmentServiceImpl implements AppointmentService {
   public AvailabilityResponseDto checkAvailability(LocalDate date, String serviceType, int duration) {
     log.info("Checking availability for date: {}, service: {}, duration: {}", date, serviceType, duration);
 
-    LocalDateTime dayStart = date.atTime(BUSINESS_START);
-    LocalDateTime dayEnd = date.atTime(BUSINESS_END);
+    if (holidayRepository.existsByDate(date)) {
+      return AvailabilityResponseDto.builder()
+          .date(date).serviceType(serviceType).durationMinutes(duration)
+          .availableSlots(Collections.emptyList()).build();
+    }
 
-    // Get all existing appointments for the day
-    List<Appointment> existingAppointments = appointmentRepository
-        .findByRequestedDateTimeBetween(dayStart, dayEnd);
+    BusinessHours businessHours = businessHoursRepository.findByDayOfWeek(date.getDayOfWeek()).orElse(null);
 
-    // Generate all possible time slots
-    List<TimeSlotDto> slots = generateTimeSlots(date, duration, existingAppointments);
+    if (businessHours == null || !businessHours.getIsOpen()) {
+      return AvailabilityResponseDto.builder()
+          .date(date).serviceType(serviceType).durationMinutes(duration)
+          .availableSlots(Collections.emptyList()).build();
+    }
+
+    List<ServiceBay> bays = serviceBayRepository.findByActiveTrue();
+    List<TimeSlotDto> slots = generateTimeSlots(date, duration, businessHours, bays);
 
     return AvailabilityResponseDto.builder()
-        .date(date)
-        .serviceType(serviceType)
-        .durationMinutes(duration)
-        .availableSlots(slots)
-        .build();
+        .date(date).serviceType(serviceType).durationMinutes(duration)
+        .availableSlots(slots).build();
   }
 
   @Override
@@ -199,23 +223,269 @@ public class AppointmentServiceImpl implements AppointmentService {
         .findByAssignedEmployeeIdAndRequestedDateTimeBetween(employeeId, dayStart, dayEnd);
 
     List<ScheduleItemDto> scheduleItems = appointments.stream()
-        .map(this::convertToScheduleItem)
-        .collect(Collectors.toList());
+        .map(this::convertToScheduleItem).collect(Collectors.toList());
 
     return ScheduleResponseDto.builder()
-        .employeeId(employeeId)
-        .date(date)
-        .appointments(scheduleItems)
-        .build();
+        .employeeId(employeeId).date(date).appointments(scheduleItems).build();
+  }
+
+  @Override
+  public CalendarResponseDto getMonthlyCalendar(YearMonth month, String userRole) {
+    log.info("Fetching calendar for month: {}", month);
+
+    LocalDate startDate = month.atDay(1);
+    LocalDate endDate = month.atEndOfMonth();
+    
+    LocalDateTime startDateTime = startDate.atStartOfDay();
+    LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
+
+    List<Appointment> appointments = appointmentRepository.findByRequestedDateTimeBetween(startDateTime, endDateTime);
+
+    Map<LocalDate, Holiday> holidays = holidayRepository.findAll().stream()
+        .filter(h -> !h.getDate().isBefore(startDate) && !h.getDate().isAfter(endDate))
+        .collect(Collectors.toMap(Holiday::getDate, h -> h));
+
+    Map<String, String> bayIdToName = serviceBayRepository.findAll().stream()
+        .collect(Collectors.toMap(ServiceBay::getId, ServiceBay::getName));
+
+    Map<LocalDate, List<Appointment>> appointmentsByDate = appointments.stream()
+        .collect(Collectors.groupingBy(a -> a.getRequestedDateTime().toLocalDate()));
+
+    List<CalendarDayDto> days = new ArrayList<>();
+    for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+      List<Appointment> dayAppointments = appointmentsByDate.getOrDefault(date, Collections.emptyList());
+      Holiday holiday = holidays.get(date);
+
+      List<AppointmentSummaryDto> summaries = dayAppointments.stream()
+          .map(a -> convertToSummary(a, bayIdToName)).collect(Collectors.toList());
+
+      days.add(CalendarDayDto.builder()
+          .date(date).appointmentCount(dayAppointments.size())
+          .isHoliday(holiday != null).holidayName(holiday != null ? holiday.getName() : null)
+          .appointments(summaries).build());
+    }
+
+    CalendarStatisticsDto statistics = calculateStatistics(appointments, bayIdToName);
+
+    return CalendarResponseDto.builder()
+        .month(month).days(days).statistics(statistics).build();
   }
 
   // Helper methods
+
+  private void validateAppointmentDateTime(LocalDateTime dateTime, int durationMinutes) {
+    LocalDate date = dateTime.toLocalDate();
+    LocalTime time = dateTime.toLocalTime();
+
+    if (dateTime.isBefore(LocalDateTime.now())) {
+      throw new IllegalArgumentException("Appointment date must be in the future");
+    }
+
+    if (holidayRepository.existsByDate(date)) {
+      throw new IllegalArgumentException("Cannot book appointment on a holiday");
+    }
+
+    BusinessHours businessHours = businessHoursRepository.findByDayOfWeek(date.getDayOfWeek())
+        .orElseThrow(() -> new IllegalArgumentException("No business hours configured for this day"));
+
+    if (!businessHours.getIsOpen()) {
+      throw new IllegalArgumentException("Shop is closed on " + date.getDayOfWeek());
+    }
+
+    if (time.isBefore(businessHours.getOpenTime()) || 
+        time.plusMinutes(durationMinutes).isAfter(businessHours.getCloseTime())) {
+      throw new IllegalArgumentException("Requested time is outside business hours");
+    }
+
+    if (businessHours.getBreakStartTime() != null && businessHours.getBreakEndTime() != null) {
+      if (!time.isBefore(businessHours.getBreakStartTime()) && 
+          time.isBefore(businessHours.getBreakEndTime())) {
+        throw new IllegalArgumentException("Cannot book appointment during break time");
+      }
+    }
+  }
+
+  private String findAvailableBay(LocalDateTime requestedDateTime, int durationMinutes) {
+    List<ServiceBay> bays = serviceBayRepository.findByActiveTrueOrderByBayNumberAsc();
+    
+    if (bays.isEmpty()) {
+      throw new IllegalStateException("No service bays available");
+    }
+
+    LocalDateTime slotEnd = requestedDateTime.plusMinutes(durationMinutes);
+
+    for (ServiceBay bay : bays) {
+      List<Appointment> bayAppointments = appointmentRepository
+          .findByAssignedBayIdAndRequestedDateTimeBetweenAndStatusNot(
+              bay.getId(), requestedDateTime.minusHours(2), requestedDateTime.plusHours(2),
+              AppointmentStatus.CANCELLED);
+
+      boolean isAvailable = bayAppointments.stream()
+          .noneMatch(apt -> {
+            LocalDateTime aptStart = apt.getRequestedDateTime();
+            LocalDateTime aptEnd = aptStart.plusMinutes(60);
+            return slotEnd.isAfter(aptStart) && requestedDateTime.isBefore(aptEnd);
+          });
+
+      if (isAvailable) {
+        return bay.getId();
+      }
+    }
+
+    throw new IllegalArgumentException("No bays available at the requested time");
+  }
+
+  private String generateConfirmationNumber() {
+    LocalDate today = LocalDate.now();
+    String prefix = "APT-" + today.getYear() + "-";
+    
+    Optional<String> maxConfirmationOpt = appointmentRepository.findMaxConfirmationNumberByPrefix(prefix);
+    
+    int nextNumber = 1000;
+    if (maxConfirmationOpt.isPresent() && maxConfirmationOpt.get() != null) {
+      String maxConfirmation = maxConfirmationOpt.get();
+      String numberPart = maxConfirmation.substring(prefix.length());
+      nextNumber = Integer.parseInt(numberPart) + 1;
+    }
+    
+    return prefix + String.format("%06d", nextNumber);
+  }
+
+  private List<TimeSlotDto> generateTimeSlots(LocalDate date, int durationMinutes, 
+                                               BusinessHours businessHours, List<ServiceBay> bays) {
+    List<TimeSlotDto> slots = new ArrayList<>();
+    LocalDateTime currentSlot = date.atTime(businessHours.getOpenTime());
+    LocalDateTime endOfDay = date.atTime(businessHours.getCloseTime());
+
+    while (currentSlot.plusMinutes(durationMinutes).isBefore(endOfDay) ||
+           currentSlot.plusMinutes(durationMinutes).equals(endOfDay)) {
+
+      if (businessHours.getBreakStartTime() != null && businessHours.getBreakEndTime() != null) {
+        LocalTime slotTime = currentSlot.toLocalTime();
+        if (!slotTime.isBefore(businessHours.getBreakStartTime()) && 
+            slotTime.isBefore(businessHours.getBreakEndTime())) {
+          currentSlot = currentSlot.plusMinutes(SLOT_INTERVAL_MINUTES);
+          continue;
+        }
+      }
+
+      LocalDateTime slotEnd = currentSlot.plusMinutes(durationMinutes);
+
+      for (ServiceBay bay : bays) {
+        boolean isAvailable = isBayAvailable(bay.getId(), currentSlot, slotEnd);
+
+        if (isAvailable) {
+          slots.add(TimeSlotDto.builder()
+              .startTime(currentSlot).endTime(slotEnd).available(true)
+              .bayId(bay.getId()).bayName(bay.getName()).build());
+          break;
+        }
+      }
+
+      currentSlot = currentSlot.plusMinutes(SLOT_INTERVAL_MINUTES);
+    }
+
+    return slots;
+  }
+
+  private boolean isBayAvailable(String bayId, LocalDateTime slotStart, LocalDateTime slotEnd) {
+    List<Appointment> bayAppointments = appointmentRepository
+        .findByAssignedBayIdAndRequestedDateTimeBetweenAndStatusNot(
+            bayId, slotStart.minusHours(1), slotEnd.plusHours(1), AppointmentStatus.CANCELLED);
+
+    for (Appointment appointment : bayAppointments) {
+      if (appointment.getStatus() == AppointmentStatus.NO_SHOW) {
+        continue;
+      }
+
+      LocalDateTime aptStart = appointment.getRequestedDateTime();
+      LocalDateTime aptEnd = aptStart.plusMinutes(60);
+
+      if (slotStart.isBefore(aptEnd) && slotEnd.isAfter(aptStart)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private void validateStatusTransition(AppointmentStatus currentStatus, AppointmentStatus newStatus) {
+    List<AppointmentStatus> validTransitions;
+
+    switch (currentStatus) {
+      case PENDING:
+        validTransitions = Arrays.asList(AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED);
+        break;
+      case CONFIRMED:
+        validTransitions = Arrays.asList(AppointmentStatus.IN_PROGRESS, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW);
+        break;
+      case IN_PROGRESS:
+        validTransitions = Arrays.asList(AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED);
+        break;
+      case COMPLETED:
+      case CANCELLED:
+      case NO_SHOW:
+        validTransitions = List.of();
+        break;
+      default:
+        validTransitions = List.of();
+    }
+
+    if (!validTransitions.contains(newStatus)) {
+      throw new InvalidStatusTransitionException(currentStatus, newStatus);
+    }
+  }
+
+  private CalendarStatisticsDto calculateStatistics(List<Appointment> appointments, Map<String, String> bayIdToName) {
+    Map<String, Integer> byServiceType = new HashMap<>();
+    Map<String, Integer> byBay = new HashMap<>();
+    
+    int completed = 0, pending = 0, confirmed = 0, cancelled = 0;
+
+    for (Appointment apt : appointments) {
+      switch (apt.getStatus()) {
+        case COMPLETED:
+          completed++;
+          break;
+        case PENDING:
+          pending++;
+          break;
+        case CONFIRMED:
+        case IN_PROGRESS:
+          confirmed++;
+          break;
+        case CANCELLED:
+        case NO_SHOW:
+          cancelled++;
+          break;
+      }
+
+      byServiceType.merge(apt.getServiceType(), 1, Integer::sum);
+
+      if (apt.getAssignedBayId() != null) {
+        String bayName = bayIdToName.getOrDefault(apt.getAssignedBayId(), "Unknown Bay");
+        byBay.merge(bayName, 1, Integer::sum);
+      }
+    }
+
+    return CalendarStatisticsDto.builder()
+        .totalAppointments(appointments.size())
+        .completedAppointments(completed)
+        .pendingAppointments(pending)
+        .confirmedAppointments(confirmed)
+        .cancelledAppointments(cancelled)
+        .appointmentsByServiceType(byServiceType)
+        .appointmentsByBay(byBay)
+        .build();
+  }
+
   private AppointmentResponseDto convertToDto(Appointment appointment) {
     return AppointmentResponseDto.builder()
         .id(appointment.getId())
         .customerId(appointment.getCustomerId())
         .vehicleId(appointment.getVehicleId())
         .assignedEmployeeId(appointment.getAssignedEmployeeId())
+        .assignedBayId(appointment.getAssignedBayId())
+        .confirmationNumber(appointment.getConfirmationNumber())
         .serviceType(appointment.getServiceType())
         .requestedDateTime(appointment.getRequestedDateTime())
         .status(appointment.getStatus())
@@ -237,74 +507,18 @@ public class AppointmentServiceImpl implements AppointmentService {
         .build();
   }
 
-  private List<TimeSlotDto> generateTimeSlots(LocalDate date, int durationMinutes, List<Appointment> existingAppointments) {
-    List<TimeSlotDto> slots = new ArrayList<>();
-    LocalDateTime currentSlot = date.atTime(BUSINESS_START);
-    LocalDateTime endOfDay = date.atTime(BUSINESS_END);
+  private AppointmentSummaryDto convertToSummary(Appointment appointment, Map<String, String> bayIdToName) {
+    String bayName = appointment.getAssignedBayId() != null 
+        ? bayIdToName.getOrDefault(appointment.getAssignedBayId(), "Not Assigned")
+        : "Not Assigned";
 
-    while (currentSlot.plusMinutes(durationMinutes).isBefore(endOfDay) ||
-           currentSlot.plusMinutes(durationMinutes).equals(endOfDay)) {
-
-      LocalDateTime slotEnd = currentSlot.plusMinutes(durationMinutes);
-      boolean isAvailable = isSlotAvailable(currentSlot, slotEnd, existingAppointments);
-
-      slots.add(TimeSlotDto.builder()
-          .startTime(currentSlot)
-          .endTime(slotEnd)
-          .available(isAvailable)
-          .build());
-
-      currentSlot = currentSlot.plusMinutes(SLOT_INTERVAL_MINUTES);
-    }
-
-    return slots;
-  }
-
-  private boolean isSlotAvailable(LocalDateTime slotStart, LocalDateTime slotEnd, List<Appointment> existingAppointments) {
-    // Check if the slot overlaps with any existing appointment
-    for (Appointment appointment : existingAppointments) {
-      // Skip cancelled and no-show appointments
-      if (appointment.getStatus() == AppointmentStatus.CANCELLED ||
-          appointment.getStatus() == AppointmentStatus.NO_SHOW) {
-        continue;
-      }
-
-      LocalDateTime appointmentStart = appointment.getRequestedDateTime();
-      LocalDateTime appointmentEnd = appointmentStart.plusMinutes(60); // Assume 60 min default duration
-
-      // Check for overlap
-      if (slotStart.isBefore(appointmentEnd) && slotEnd.isAfter(appointmentStart)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private void validateStatusTransition(AppointmentStatus currentStatus, AppointmentStatus newStatus) {
-    // Define valid transitions
-    List<AppointmentStatus> validTransitions;
-
-    switch (currentStatus) {
-      case PENDING:
-        validTransitions = Arrays.asList(AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED);
-        break;
-      case CONFIRMED:
-        validTransitions = Arrays.asList(AppointmentStatus.IN_PROGRESS, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW);
-        break;
-      case IN_PROGRESS:
-        validTransitions = Arrays.asList(AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED);
-        break;
-      case COMPLETED:
-      case CANCELLED:
-      case NO_SHOW:
-        validTransitions = List.of(); // Terminal states
-        break;
-      default:
-        validTransitions = List.of();
-    }
-
-    if (!validTransitions.contains(newStatus)) {
-      throw new InvalidStatusTransitionException(currentStatus, newStatus);
-    }
+    return AppointmentSummaryDto.builder()
+        .id(appointment.getId())
+        .confirmationNumber(appointment.getConfirmationNumber())
+        .time(appointment.getRequestedDateTime())
+        .serviceType(appointment.getServiceType())
+        .status(appointment.getStatus())
+        .bayName(bayName)
+        .build();
   }
 }
