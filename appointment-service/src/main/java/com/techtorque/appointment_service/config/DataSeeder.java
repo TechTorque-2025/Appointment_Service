@@ -22,18 +22,19 @@ import java.util.List;
 public class DataSeeder {
 
   // Shared constants for cross-service consistency
-  // These UUIDs should match the Auth service seeded users
-  public static final String CUSTOMER_1_ID = "00000000-0000-0000-0000-000000000101";
-  public static final String CUSTOMER_2_ID = "00000000-0000-0000-0000-000000000102";
-  public static final String EMPLOYEE_1_ID = "00000000-0000-0000-0000-000000000003";
-  public static final String EMPLOYEE_2_ID = "00000000-0000-0000-0000-000000000004";
-  public static final String EMPLOYEE_3_ID = "00000000-0000-0000-0000-000000000005";
+  // These should match the Auth service seeded users (USERNAMES, not UUIDs)
+  // The Gateway forwards X-User-Subject header with USERNAME values
+  public static final String CUSTOMER_1_ID = "customer";
+  public static final String CUSTOMER_2_ID = "testuser";
+  public static final String EMPLOYEE_1_ID = "employee";
+  public static final String EMPLOYEE_2_ID = "employee";
+  public static final String EMPLOYEE_3_ID = "employee";
 
   // Vehicle IDs (should match Vehicle service seed data)
-  public static final String VEHICLE_1_ID = "VEH-001";
-  public static final String VEHICLE_2_ID = "VEH-002";
-  public static final String VEHICLE_3_ID = "VEH-003";
-  public static final String VEHICLE_4_ID = "VEH-004";
+  public static final String VEHICLE_1_ID = "VEH-2022-TOYOTA-CAMRY-0001";
+  public static final String VEHICLE_2_ID = "VEH-2021-HONDA-ACCORD-0002";
+  public static final String VEHICLE_3_ID = "VEH-2023-BMW-X5-0003";
+  public static final String VEHICLE_4_ID = "VEH-2020-MERCEDES-C300-0004";
 
   @Bean
   CommandLineRunner initDatabase(

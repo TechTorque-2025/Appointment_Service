@@ -3,6 +3,7 @@ package com.techtorque.appointment_service.exception;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -79,6 +80,21 @@ public class GlobalExceptionHandler {
     response.put("path", request.getRequestURI());
 
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+  }
+
+  @ExceptionHandler(AccessDeniedException.class)
+  public ResponseEntity<ErrorResponse> handleAccessDenied(
+      AccessDeniedException ex, HttpServletRequest request) {
+
+    ErrorResponse errorResponse = ErrorResponse.builder()
+        .timestamp(LocalDateTime.now())
+        .status(HttpStatus.FORBIDDEN.value())
+        .error(HttpStatus.FORBIDDEN.getReasonPhrase())
+        .message("Access denied: " + ex.getMessage())
+        .path(request.getRequestURI())
+        .build();
+
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
   }
 
   @ExceptionHandler(Exception.class)
