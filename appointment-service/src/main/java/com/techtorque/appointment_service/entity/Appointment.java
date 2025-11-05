@@ -29,6 +29,11 @@ public class Appointment {
 
   private String assignedEmployeeId; // Can be null initially
 
+  private String assignedBayId; // Foreign key to ServiceBay
+
+  @Column(unique = true)
+  private String confirmationNumber; // e.g., "APT-2025-001234"
+
   @Column(nullable = false)
   private String serviceType;
 
