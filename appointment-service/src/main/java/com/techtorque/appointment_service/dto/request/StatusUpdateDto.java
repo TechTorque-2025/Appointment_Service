@@ -1,4 +1,4 @@
-package com.techtorque.appointment_service.dto;
+package com.techtorque.appointment_service.dto.request;
 
 import com.techtorque.appointment_service.entity.AppointmentStatus;
 import jakarta.validation.constraints.NotNull;

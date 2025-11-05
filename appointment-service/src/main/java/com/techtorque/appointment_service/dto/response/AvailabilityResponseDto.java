@@ -1,4 +1,4 @@
-package com.techtorque.appointment_service.dto;
+package com.techtorque.appointment_service.dto.response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -11,9 +11,10 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ScheduleResponseDto {
+public class AvailabilityResponseDto {
 
-  private String employeeId;
   private LocalDate date;
-  private List<ScheduleItemDto> appointments;
+  private String serviceType;
+  private int durationMinutes;
+  private List<TimeSlotDto> availableSlots;
 }

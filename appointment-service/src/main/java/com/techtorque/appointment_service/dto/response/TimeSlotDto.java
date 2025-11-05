@@ -1,4 +1,4 @@
-package com.techtorque.appointment_service.dto;
+package com.techtorque.appointment_service.dto.response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -15,4 +15,6 @@ public class TimeSlotDto {
   private LocalDateTime startTime;
   private LocalDateTime endTime;
   private boolean available;
+  private String bayId;
+  private String bayName;
 }

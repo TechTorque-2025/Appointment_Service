@@ -1,4 +1,4 @@
-package com.techtorque.appointment_service.dto;
+package com.techtorque.appointment_service.dto.response;
 
 import com.techtorque.appointment_service.entity.AppointmentStatus;
 import lombok.AllArgsConstructor;
@@ -11,16 +11,13 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class AppointmentResponseDto {
+public class ScheduleItemDto {
 
-  private String id;
+  private String appointmentId;
   private String customerId;
   private String vehicleId;
-  private String assignedEmployeeId;
   private String serviceType;
-  private LocalDateTime requestedDateTime;
+  private LocalDateTime startTime;
   private AppointmentStatus status;
   private String specialInstructions;
-  private LocalDateTime createdAt;
-  private LocalDateTime updatedAt;
 }
