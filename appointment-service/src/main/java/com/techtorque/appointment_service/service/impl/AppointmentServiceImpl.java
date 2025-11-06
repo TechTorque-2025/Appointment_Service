@@ -74,7 +74,7 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     List<Appointment> appointments;
 
-    if (userRoles.contains("ADMIN")) {
+    if (userRoles.contains("ADMIN") || userRoles.contains("EMPLOYEE")) {
       appointments = appointmentRepository.findAll();
     } else if (userRoles.contains("EMPLOYEE")) {
       appointments = appointmentRepository.findByAssignedEmployeeIdAndRequestedDateTimeBetween(
@@ -83,22 +83,44 @@ public class AppointmentServiceImpl implements AppointmentService {
       appointments = appointmentRepository.findByCustomerIdOrderByRequestedDateTimeDesc(userId);
     }
 
-    return appointments.stream().map(this::convertToDto).collect(Collectors.toList());
+    log.info("Found {} appointments for user", appointments != null ? appointments.size() : 0);
+
+    if (appointments == null) {
+      return List.of();
+    }
+
+    return appointments.stream()
+        .filter(appointment -> appointment != null)
+        .map(this::convertToDto)
+        .collect(Collectors.toList());
   }
 
   @Override
   public List<AppointmentResponseDto> getAppointmentsWithFilters(
       String customerId, String vehicleId, AppointmentStatus status, 
       LocalDate fromDate, LocalDate toDate) {
-    log.info("Fetching appointments with filters");
+    log.info("Fetching appointments with filters - customerId: {}, vehicleId: {}, status: {}, fromDate: {}, toDate: {}", 
+        customerId, vehicleId, status, fromDate, toDate);
 
     LocalDateTime fromDateTime = fromDate != null ? fromDate.atStartOfDay() : null;
     LocalDateTime toDateTime = toDate != null ? toDate.atTime(23, 59, 59) : null;
 
-    List<Appointment> appointments = appointmentRepository.findWithFilters(
-        customerId, vehicleId, status, fromDateTime, toDateTime);
+    // Convert AppointmentStatus enum to String for the native query
+    String statusString = status != null ? status.name() : null;
 
-    return appointments.stream().map(this::convertToDto).collect(Collectors.toList());
+    List<Appointment> appointments = appointmentRepository.findWithFilters(
+        customerId, vehicleId, statusString, fromDateTime, toDateTime);
+
+    log.info("Found {} appointments matching filters", appointments != null ? appointments.size() : 0);
+
+    if (appointments == null) {
+      return List.of();
+    }
+
+    return appointments.stream()
+        .filter(appointment -> appointment != null)
+        .map(this::convertToDto)
+        .collect(Collectors.toList());
   }
 
   @Override
