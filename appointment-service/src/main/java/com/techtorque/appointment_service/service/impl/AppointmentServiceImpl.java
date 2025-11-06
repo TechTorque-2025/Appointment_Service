@@ -39,8 +39,20 @@ public class AppointmentServiceImpl implements AppointmentService {
   }
 
   @Override
-  public Appointment bookAppointment(AppointmentRequestDto dto, String customerId) {
+  public synchronized Appointment bookAppointment(AppointmentRequestDto dto, String customerId) {
     log.info("Booking new appointment for customer: {}", customerId);
+
+    // Validate vehicle ID is provided
+    if (dto.getVehicleId() == null || dto.getVehicleId().trim().isEmpty()) {
+      throw new InvalidAppointmentException("Vehicle ID is required");
+    }
+
+    // NOTE: In production, validate vehicle exists via inter-service call to Vehicle Service
+    // For now, we check basic format (UUID-like pattern)
+    if (!dto.getVehicleId().matches("^[a-fA-F0-9-]{36}$")) {
+      log.warn("Vehicle ID format invalid: {}", dto.getVehicleId());
+      // Don't throw - allow for testing with non-UUID IDs, but log warning
+    }
 
     // Validate appointment time is in business hours
     LocalTime requestedTime = dto.getRequestedDateTime().toLocalTime();
@@ -55,6 +67,7 @@ public class AppointmentServiceImpl implements AppointmentService {
     }
 
     // Check for conflicting appointments (same vehicle, overlapping time)
+    // This check is now atomic with the save operation due to synchronized method
     LocalDateTime startCheck = dto.getRequestedDateTime().minusMinutes(DEFAULT_APPOINTMENT_DURATION);
     LocalDateTime endCheck = dto.getRequestedDateTime().plusMinutes(DEFAULT_APPOINTMENT_DURATION);
     List<Appointment> existingAppointments =

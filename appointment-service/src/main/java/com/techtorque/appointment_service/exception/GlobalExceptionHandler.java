@@ -1,8 +1,10 @@
 package com.techtorque.appointment_service.exception;
 
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.techtorque.appointment_service.dto.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -44,6 +46,31 @@ public class GlobalExceptionHandler {
                         .message("Validation failed")
                         .data(errors)
                         .build());
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse> handleHttpMessageNotReadable(HttpMessageNotReadableException ex) {
+        String message = "Invalid request data";
+
+        // Check if it's an enum parse error
+        if (ex.getCause() instanceof InvalidFormatException) {
+            InvalidFormatException ife = (InvalidFormatException) ex.getCause();
+            if (ife.getTargetType() != null && ife.getTargetType().isEnum()) {
+                // Extract enum values
+                Object[] enumValues = ife.getTargetType().getEnumConstants();
+                StringBuilder validValues = new StringBuilder();
+                for (Object val : enumValues) {
+                    if (validValues.length() > 0) validValues.append(", ");
+                    validValues.append(val.toString());
+                }
+                message = String.format("Invalid value '%s'. Accepted values are: [%s]",
+                        ife.getValue(), validValues.toString());
+            }
+        }
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(message));
     }
 
     @ExceptionHandler(Exception.class)
