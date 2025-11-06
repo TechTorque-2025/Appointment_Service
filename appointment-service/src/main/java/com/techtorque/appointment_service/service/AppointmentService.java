@@ -20,7 +20,7 @@ public interface AppointmentService {
 
   AppointmentResponseDto updateAppointment(String appointmentId, AppointmentUpdateDto dto, String customerId);
 
-  void cancelAppointment(String appointmentId, String customerId);
+  void cancelAppointment(String appointmentId, String userId, String userRoles);
 
   AppointmentResponseDto updateAppointmentStatus(String appointmentId, AppointmentStatus newStatus, String employeeId);
 

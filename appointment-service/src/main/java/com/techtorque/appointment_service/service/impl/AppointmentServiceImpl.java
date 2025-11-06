@@ -170,11 +170,20 @@ public class AppointmentServiceImpl implements AppointmentService {
   }
 
   @Override
-  public void cancelAppointment(String appointmentId, String customerId) {
-    log.info("Cancelling appointment: {} for customer: {}", appointmentId, customerId);
+  public void cancelAppointment(String appointmentId, String userId, String userRoles) {
+    log.info("Cancelling appointment: {} by user: {} with roles: {}", appointmentId, userId, userRoles);
 
-    Appointment appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, customerId)
-        .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, customerId));
+    Appointment appointment;
+
+    // Customers can only cancel their own appointments
+    if (userRoles.contains("CUSTOMER") && !userRoles.contains("EMPLOYEE") && !userRoles.contains("ADMIN")) {
+      appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, userId)
+          .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, userId));
+    } else {
+      // Employees and admins can cancel any appointment
+      appointment = appointmentRepository.findById(appointmentId)
+          .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+    }
 
     if (appointment.getStatus() == AppointmentStatus.COMPLETED) {
       throw new InvalidStatusTransitionException("Cannot cancel a completed appointment");
