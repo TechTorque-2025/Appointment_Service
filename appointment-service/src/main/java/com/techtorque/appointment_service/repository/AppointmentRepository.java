@@ -26,17 +26,18 @@ public interface AppointmentRepository extends JpaRepository<Appointment, String
   Optional<Appointment> findByIdAndCustomerId(String id, String customerId);
 
   // Query with filters
-  @Query("SELECT a FROM Appointment a WHERE " +
-         "(:customerId IS NULL OR a.customerId = :customerId) AND " +
-         "(:vehicleId IS NULL OR a.vehicleId = :vehicleId) AND " +
-         "(:status IS NULL OR a.status = :status) AND " +
-         "(:fromDate IS NULL OR a.requestedDateTime >= :fromDate) AND " +
-         "(:toDate IS NULL OR a.requestedDateTime <= :toDate) " +
-         "ORDER BY a.requestedDateTime DESC")
+  @Query(value = "SELECT * FROM appointments a WHERE " +
+         "(CAST(:customerId AS text) IS NULL OR a.customer_id = :customerId) AND " +
+         "(CAST(:vehicleId AS text) IS NULL OR a.vehicle_id = :vehicleId) AND " +
+         "(CAST(:status AS text) IS NULL OR a.status = :status) AND " +
+         "(CAST(:fromDate AS timestamp) IS NULL OR a.requested_date_time >= :fromDate) AND " +
+         "(CAST(:toDate AS timestamp) IS NULL OR a.requested_date_time <= :toDate) " +
+         "ORDER BY a.requested_date_time DESC", 
+         nativeQuery = true)
   List<Appointment> findWithFilters(
       @Param("customerId") String customerId,
       @Param("vehicleId") String vehicleId,
-      @Param("status") AppointmentStatus status,
+      @Param("status") String status,
       @Param("fromDate") LocalDateTime fromDate,
       @Param("toDate") LocalDateTime toDate);
 

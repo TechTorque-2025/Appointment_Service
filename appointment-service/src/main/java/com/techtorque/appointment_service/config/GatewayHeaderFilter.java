@@ -26,7 +26,19 @@ public class GatewayHeaderFilter extends OncePerRequestFilter {
     if (userId != null && !userId.isEmpty()) {
       List<SimpleGrantedAuthority> authorities = rolesHeader == null ? Collections.emptyList() :
               Arrays.stream(rolesHeader.split(","))
-                      .map(role -> new SimpleGrantedAuthority("ROLE_" + role.trim().toUpperCase()))
+                      .map(role -> {
+                        String roleUpper = role.trim().toUpperCase();
+                        // Treat SUPER_ADMIN as ADMIN for authorization purposes
+                        if ("SUPER_ADMIN".equals(roleUpper)) {
+                          // Add both SUPER_ADMIN and ADMIN roles
+                          return Arrays.asList(
+                            new SimpleGrantedAuthority("ROLE_SUPER_ADMIN"),
+                            new SimpleGrantedAuthority("ROLE_ADMIN")
+                          );
+                        }
+                        return Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + roleUpper));
+                      })
+                      .flatMap(List::stream)
                       .collect(Collectors.toList());
 
       UsernamePasswordAuthenticationToken authentication =

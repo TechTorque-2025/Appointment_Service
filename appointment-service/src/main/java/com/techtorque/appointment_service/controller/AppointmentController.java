@@ -47,14 +47,19 @@ public class AppointmentController {
           @RequestHeader("X-User-Roles") String userRoles,
           @RequestParam(required = false) String vehicleId,
           @RequestParam(required = false) AppointmentStatus status,
-          @RequestParam(required = false) LocalDate fromDate,
-          @RequestParam(required = false) LocalDate toDate) {
+          @RequestParam(required = false) String fromDate,
+          @RequestParam(required = false) String toDate) {
 
     // If filters are provided, use filtered search
     if (vehicleId != null || status != null || fromDate != null || toDate != null) {
       String customerId = userRoles.contains("CUSTOMER") ? userId : null;
+      
+      // Parse dates if provided
+      LocalDate parsedFromDate = fromDate != null ? LocalDate.parse(fromDate) : null;
+      LocalDate parsedToDate = toDate != null ? LocalDate.parse(toDate) : null;
+      
       List<AppointmentResponseDto> appointments = appointmentService.getAppointmentsWithFilters(
-          customerId, vehicleId, status, fromDate, toDate);
+          customerId, vehicleId, status, parsedFromDate, parsedToDate);
       return ResponseEntity.ok(appointments);
     }
 
