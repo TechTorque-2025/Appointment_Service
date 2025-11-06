@@ -92,14 +92,15 @@ public class AppointmentController {
     return ResponseEntity.ok(updated);
   }
 
-  @Operation(summary = "Cancel an appointment (customer only)")
+  @Operation(summary = "Cancel an appointment (customer, employee, or admin)")
   @DeleteMapping("/{appointmentId}")
-  @PreAuthorize("hasRole('CUSTOMER')")
+  @PreAuthorize("hasAnyRole('CUSTOMER', 'EMPLOYEE', 'ADMIN')")
   public ResponseEntity<Void> cancelAppointment(
           @PathVariable String appointmentId,
-          @RequestHeader("X-User-Subject") String customerId) {
+          @RequestHeader("X-User-Subject") String userId,
+          @RequestHeader("X-User-Roles") String userRoles) {
 
-    appointmentService.cancelAppointment(appointmentId, customerId);
+    appointmentService.cancelAppointment(appointmentId, userId, userRoles);
     return ResponseEntity.noContent().build();
   }
 
