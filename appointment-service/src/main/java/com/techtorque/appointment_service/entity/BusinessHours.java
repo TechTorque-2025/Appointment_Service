@@ -7,45 +7,39 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import java.time.DayOfWeek;
+import java.time.LocalTime;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "appointments")
+@Table(name = "business_hours")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Appointment {
+public class BusinessHours {
 
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private String id;
 
-  @Column(nullable = false, updatable = false)
-  private String customerId; // Foreign key to the user
-
-  @Column(nullable = false)
-  private String vehicleId; // Foreign key to the vehicle
-
-  private String assignedEmployeeId; // Can be null initially
-
-  private String assignedBayId; // Foreign key to ServiceBay
-
-  @Column(unique = true)
-  private String confirmationNumber; // e.g., "APT-2025-001234"
-
-  @Column(nullable = false)
-  private String serviceType;
-
-  @Column(nullable = false)
-  private LocalDateTime requestedDateTime;
-
   @Enumerated(EnumType.STRING)
   @Column(nullable = false)
-  private AppointmentStatus status;
+  private DayOfWeek dayOfWeek;
 
-  @Lob // For potentially long instructions
-  private String specialInstructions;
+  @Column(nullable = false)
+  private LocalTime openTime;
+
+  @Column(nullable = false)
+  private LocalTime closeTime;
+
+  private LocalTime breakStartTime;
+
+  private LocalTime breakEndTime;
+
+  @Column(nullable = false)
+  @Builder.Default
+  private Boolean isOpen = true;
 
   @CreationTimestamp
   @Column(nullable = false, updatable = false)

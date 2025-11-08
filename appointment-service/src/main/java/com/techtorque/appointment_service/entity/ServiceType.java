@@ -7,45 +7,39 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "appointments")
+@Table(name = "service_types")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Appointment {
+public class ServiceType {
 
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private String id;
 
-  @Column(nullable = false, updatable = false)
-  private String customerId; // Foreign key to the user
+  @Column(nullable = false, unique = true)
+  private String name;
 
   @Column(nullable = false)
-  private String vehicleId; // Foreign key to the vehicle
-
-  private String assignedEmployeeId; // Can be null initially
-
-  private String assignedBayId; // Foreign key to ServiceBay
-
-  @Column(unique = true)
-  private String confirmationNumber; // e.g., "APT-2025-001234"
+  private String category; // e.g., "Maintenance", "Repair", "Modification"
 
   @Column(nullable = false)
-  private String serviceType;
+  private BigDecimal basePriceLKR;
 
   @Column(nullable = false)
-  private LocalDateTime requestedDateTime;
+  private Integer estimatedDurationMinutes;
 
-  @Enumerated(EnumType.STRING)
+  @Lob
+  private String description;
+
   @Column(nullable = false)
-  private AppointmentStatus status;
-
-  @Lob // For potentially long instructions
-  private String specialInstructions;
+  @Builder.Default
+  private Boolean active = true;
 
   @CreationTimestamp
   @Column(nullable = false, updatable = false)

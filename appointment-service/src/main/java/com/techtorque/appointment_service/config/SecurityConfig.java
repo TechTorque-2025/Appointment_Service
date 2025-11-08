@@ -41,6 +41,9 @@ public class SecurityConfig {
       .authorizeHttpRequests(authz -> authz
         // Permit all requests to the Swagger UI and API docs paths
         .requestMatchers(SWAGGER_WHITELIST).permitAll()
+        
+        // Public endpoint for checking appointment availability
+        .requestMatchers("/appointments/availability").permitAll()
                 
         // All other requests must be authenticated
         .anyRequest().authenticated()

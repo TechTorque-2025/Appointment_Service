@@ -10,42 +10,33 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "appointments")
+@Table(name = "service_bays")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Appointment {
+public class ServiceBay {
 
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private String id;
 
-  @Column(nullable = false, updatable = false)
-  private String customerId; // Foreign key to the user
+  @Column(nullable = false, unique = true)
+  private String bayNumber; // e.g., "BAY-01", "BAY-02"
 
   @Column(nullable = false)
-  private String vehicleId; // Foreign key to the vehicle
+  private String name; // e.g., "Bay 1 - General Service"
 
-  private String assignedEmployeeId; // Can be null initially
-
-  private String assignedBayId; // Foreign key to ServiceBay
-
-  @Column(unique = true)
-  private String confirmationNumber; // e.g., "APT-2025-001234"
+  @Lob
+  private String description;
 
   @Column(nullable = false)
-  private String serviceType;
+  @Builder.Default
+  private Integer capacity = 1; // Number of concurrent appointments (usually 1)
 
   @Column(nullable = false)
-  private LocalDateTime requestedDateTime;
-
-  @Enumerated(EnumType.STRING)
-  @Column(nullable = false)
-  private AppointmentStatus status;
-
-  @Lob // For potentially long instructions
-  private String specialInstructions;
+  @Builder.Default
+  private Boolean active = true;
 
   @CreationTimestamp
   @Column(nullable = false, updatable = false)
