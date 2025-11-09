@@ -23,6 +23,7 @@ public class AppointmentServiceImpl implements AppointmentService {
   private final ServiceBayRepository serviceBayRepository;
   private final BusinessHoursRepository businessHoursRepository;
   private final HolidayRepository holidayRepository;
+  private final com.techtorque.appointment_service.service.NotificationClient notificationClient;
 
   private static final int SLOT_INTERVAL_MINUTES = 30;
 
@@ -31,12 +32,14 @@ public class AppointmentServiceImpl implements AppointmentService {
       ServiceTypeRepository serviceTypeRepository,
       ServiceBayRepository serviceBayRepository,
       BusinessHoursRepository businessHoursRepository,
-      HolidayRepository holidayRepository) {
+      HolidayRepository holidayRepository,
+      com.techtorque.appointment_service.service.NotificationClient notificationClient) {
     this.appointmentRepository = appointmentRepository;
     this.serviceTypeRepository = serviceTypeRepository;
     this.serviceBayRepository = serviceBayRepository;
     this.businessHoursRepository = businessHoursRepository;
     this.holidayRepository = holidayRepository;
+    this.notificationClient = notificationClient;
   }
 
   @Override
@@ -64,6 +67,17 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     Appointment savedAppointment = appointmentRepository.save(appointment);
     log.info("Appointment booked successfully with confirmation: {}", confirmationNumber);
+
+    // Send notification to customer
+    notificationClient.sendAppointmentNotification(
+        customerId,
+        "INFO",
+        "Appointment Booked - " + dto.getServiceType(),
+        String.format("Your appointment has been booked for %s. Confirmation number: %s. Pending approval.",
+            dto.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a")),
+            confirmationNumber),
+        savedAppointment.getId()
+    );
 
     return convertToDto(savedAppointment);
   }
@@ -166,6 +180,17 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment updatedAppointment = appointmentRepository.save(appointment);
     log.info("Appointment updated successfully: {}", appointmentId);
 
+    // Send notification to customer
+    notificationClient.sendAppointmentNotification(
+        customerId,
+        "INFO",
+        "Appointment Updated - " + appointment.getServiceType(),
+        String.format("Your appointment has been updated to %s. Confirmation: %s",
+            appointment.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a")),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
     return convertToDto(updatedAppointment);
   }
 
@@ -192,6 +217,18 @@ public class AppointmentServiceImpl implements AppointmentService {
     appointment.setStatus(AppointmentStatus.CANCELLED);
     appointmentRepository.save(appointment);
 
+    // Send notification to customer
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "WARNING",
+        "Appointment Cancelled",
+        String.format("Your appointment for %s on %s has been cancelled. Confirmation: %s",
+            appointment.getServiceType(),
+            appointment.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a")),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
     log.info("Appointment cancelled successfully: {}", appointmentId);
   }
 
@@ -211,6 +248,40 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     appointment.setStatus(newStatus);
     Appointment updatedAppointment = appointmentRepository.save(appointment);
+
+    // Send status change notification to customer
+    String statusMessage;
+    String notificationType = "INFO";
+
+    switch(newStatus) {
+      case CONFIRMED:
+        statusMessage = "Your appointment has been confirmed and scheduled";
+        notificationType = "SUCCESS";
+        break;
+      case IN_PROGRESS:
+        statusMessage = "Your vehicle service has started. Our team is working on your " + appointment.getServiceType();
+        notificationType = "INFO";
+        break;
+      case COMPLETED:
+        statusMessage = "Your service is complete! Thank you for choosing our service";
+        notificationType = "SUCCESS";
+        break;
+      case NO_SHOW:
+        statusMessage = "You missed your scheduled appointment. Please contact us to reschedule";
+        notificationType = "WARNING";
+        break;
+      default:
+        statusMessage = "Appointment status updated to " + newStatus;
+        notificationType = "INFO";
+    }
+
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        notificationType,
+        "Appointment Status: " + newStatus,
+        statusMessage + ". Confirmation: " + appointment.getConfirmationNumber(),
+        appointmentId
+    );
 
     log.info("Appointment status updated successfully: {}", appointmentId);
 
@@ -308,6 +379,9 @@ public class AppointmentServiceImpl implements AppointmentService {
     LocalDate date = dateTime.toLocalDate();
     LocalTime time = dateTime.toLocalTime();
 
+    log.info("DEBUG: Validating appointment - dateTime: {}, date: {}, time: {}, duration: {} minutes",
+        dateTime, date, time, durationMinutes);
+
     if (dateTime.isBefore(LocalDateTime.now())) {
       throw new IllegalArgumentException("Appointment date must be in the future");
     }
@@ -319,17 +393,28 @@ public class AppointmentServiceImpl implements AppointmentService {
     BusinessHours businessHours = businessHoursRepository.findByDayOfWeek(date.getDayOfWeek())
         .orElseThrow(() -> new IllegalArgumentException("No business hours configured for this day"));
 
+    log.info("DEBUG: Business hours for {} - Open: {}, Close: {}, IsOpen: {}",
+        date.getDayOfWeek(), businessHours.getOpenTime(), businessHours.getCloseTime(), businessHours.getIsOpen());
+
     if (!businessHours.getIsOpen()) {
       throw new IllegalArgumentException("Shop is closed on " + date.getDayOfWeek());
     }
 
-    if (time.isBefore(businessHours.getOpenTime()) || 
+    LocalTime endTime = time.plusMinutes(durationMinutes);
+    log.info("DEBUG: Time check - Requested time: {}, End time: {}, Open time: {}, Close time: {}",
+        time, endTime, businessHours.getOpenTime(), businessHours.getCloseTime());
+    log.info("DEBUG: Validation checks - isBefore open: {}, isAfter close: {}",
+        time.isBefore(businessHours.getOpenTime()), endTime.isAfter(businessHours.getCloseTime()));
+
+    if (time.isBefore(businessHours.getOpenTime()) ||
         time.plusMinutes(durationMinutes).isAfter(businessHours.getCloseTime())) {
+      log.error("VALIDATION FAILED: Time {} with duration {} minutes is outside business hours {} - {}",
+          time, durationMinutes, businessHours.getOpenTime(), businessHours.getCloseTime());
       throw new IllegalArgumentException("Requested time is outside business hours");
     }
 
     if (businessHours.getBreakStartTime() != null && businessHours.getBreakEndTime() != null) {
-      if (!time.isBefore(businessHours.getBreakStartTime()) && 
+      if (!time.isBefore(businessHours.getBreakStartTime()) &&
           time.isBefore(businessHours.getBreakEndTime())) {
         throw new IllegalArgumentException("Cannot book appointment during break time");
       }
