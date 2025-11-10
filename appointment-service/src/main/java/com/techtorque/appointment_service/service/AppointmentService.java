@@ -6,6 +6,7 @@ import com.techtorque.appointment_service.entity.AppointmentStatus;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Set;
 
 public interface AppointmentService {
 
@@ -29,4 +30,10 @@ public interface AppointmentService {
   ScheduleResponseDto getEmployeeSchedule(String employeeId, LocalDate date);
 
   CalendarResponseDto getMonthlyCalendar(YearMonth month, String userRole);
+
+  AppointmentResponseDto assignEmployees(String appointmentId, Set<String> employeeIds, String adminId);
+
+  AppointmentResponseDto acceptVehicleArrival(String appointmentId, String employeeId);
+
+  AppointmentResponseDto completeWork(String appointmentId, String employeeId);
 }

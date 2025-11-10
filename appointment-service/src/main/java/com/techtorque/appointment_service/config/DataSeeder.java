@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Data seeder for development environment
@@ -321,7 +322,7 @@ public class DataSeeder {
     appointments.add(Appointment.builder()
         .customerId(CUSTOMER_1_ID)
         .vehicleId(VEHICLE_1_ID)
-        .assignedEmployeeId(EMPLOYEE_1_ID)
+        .assignedEmployeeIds(Set.of(EMPLOYEE_1_ID))
         .assignedBayId(bays.get(0).getId())
         .confirmationNumber("APT-" + today.getYear() + "-" + String.format("%06d", confirmationCounter++))
         .serviceType("Oil Change")
@@ -334,7 +335,7 @@ public class DataSeeder {
     appointments.add(Appointment.builder()
         .customerId(CUSTOMER_2_ID)
         .vehicleId(VEHICLE_3_ID)
-        .assignedEmployeeId(EMPLOYEE_2_ID)
+        .assignedEmployeeIds(Set.of(EMPLOYEE_2_ID))
         .assignedBayId(bays.get(1).getId())
         .confirmationNumber("APT-" + today.getYear() + "-" + String.format("%06d", confirmationCounter++))
         .serviceType("Brake Service")
@@ -347,7 +348,7 @@ public class DataSeeder {
     appointments.add(Appointment.builder()
         .customerId(CUSTOMER_1_ID)
         .vehicleId(VEHICLE_2_ID)
-        .assignedEmployeeId(EMPLOYEE_1_ID)
+        .assignedEmployeeIds(Set.of(EMPLOYEE_1_ID))
         .assignedBayId(bays.get(0).getId())
         .confirmationNumber("APT-" + today.getYear() + "-" + String.format("%06d", confirmationCounter++))
         .serviceType("Wheel Alignment")
@@ -360,7 +361,7 @@ public class DataSeeder {
     appointments.add(Appointment.builder()
         .customerId(CUSTOMER_2_ID)
         .vehicleId(VEHICLE_4_ID)
-        .assignedEmployeeId(EMPLOYEE_3_ID)
+        .assignedEmployeeIds(Set.of(EMPLOYEE_3_ID))
         .assignedBayId(bays.get(2).getId())
         .confirmationNumber("APT-" + today.getYear() + "-" + String.format("%06d", confirmationCounter++))
         .serviceType("Engine Diagnostic")
@@ -369,17 +370,17 @@ public class DataSeeder {
         .specialInstructions("Check engine light is on")
         .build());
 
-    // Tomorrow's appointment - CONFIRMED
+    // Tomorrow's appointment - CONFIRMED (with 2 employees)
     appointments.add(Appointment.builder()
         .customerId(CUSTOMER_1_ID)
         .vehicleId(VEHICLE_1_ID)
-        .assignedEmployeeId(EMPLOYEE_2_ID)
+        .assignedEmployeeIds(Set.of(EMPLOYEE_1_ID, EMPLOYEE_2_ID))
         .assignedBayId(bays.get(1).getId())
         .confirmationNumber("APT-" + today.getYear() + "-" + String.format("%06d", confirmationCounter++))
         .serviceType("AC Service")
         .requestedDateTime(today.plusDays(1).atTime(10, 0))
         .status(AppointmentStatus.CONFIRMED)
-        .specialInstructions("AC not cooling properly")
+        .specialInstructions("AC not cooling properly - Complex job needs 2 mechanics")
         .build());
 
     // Future appointment - PENDING

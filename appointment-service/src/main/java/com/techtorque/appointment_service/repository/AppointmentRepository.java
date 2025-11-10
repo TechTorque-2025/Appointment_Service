@@ -17,7 +17,11 @@ public interface AppointmentRepository extends JpaRepository<Appointment, String
   List<Appointment> findByCustomerIdOrderByRequestedDateTimeDesc(String customerId);
 
   // For employees to view their assigned appointments
-  List<Appointment> findByAssignedEmployeeIdAndRequestedDateTimeBetween(String assignedEmployeeId, LocalDateTime start, LocalDateTime end);
+  @Query("SELECT a FROM Appointment a JOIN a.assignedEmployeeIds e WHERE e = :employeeId AND a.requestedDateTime BETWEEN :start AND :end")
+  List<Appointment> findByAssignedEmployeeIdAndRequestedDateTimeBetween(
+      @Param("employeeId") String employeeId,
+      @Param("start") LocalDateTime start,
+      @Param("end") LocalDateTime end);
 
   // For checking general availability
   List<Appointment> findByRequestedDateTimeBetween(LocalDateTime start, LocalDateTime end);

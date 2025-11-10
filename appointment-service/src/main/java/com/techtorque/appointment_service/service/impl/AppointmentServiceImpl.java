@@ -24,6 +24,7 @@ public class AppointmentServiceImpl implements AppointmentService {
   private final BusinessHoursRepository businessHoursRepository;
   private final HolidayRepository holidayRepository;
   private final com.techtorque.appointment_service.service.NotificationClient notificationClient;
+  private final com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient;
 
   private static final int SLOT_INTERVAL_MINUTES = 30;
 
@@ -33,13 +34,15 @@ public class AppointmentServiceImpl implements AppointmentService {
       ServiceBayRepository serviceBayRepository,
       BusinessHoursRepository businessHoursRepository,
       HolidayRepository holidayRepository,
-      com.techtorque.appointment_service.service.NotificationClient notificationClient) {
+      com.techtorque.appointment_service.service.NotificationClient notificationClient,
+      com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient) {
     this.appointmentRepository = appointmentRepository;
     this.serviceTypeRepository = serviceTypeRepository;
     this.serviceBayRepository = serviceBayRepository;
     this.businessHoursRepository = businessHoursRepository;
     this.holidayRepository = holidayRepository;
     this.notificationClient = notificationClient;
+    this.timeLoggingClient = timeLoggingClient;
   }
 
   @Override
@@ -88,12 +91,15 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     List<Appointment> appointments;
 
-    if (userRoles.contains("ADMIN") || userRoles.contains("EMPLOYEE")) {
-      appointments = appointmentRepository.findAll();
-    } else if (userRoles.contains("EMPLOYEE")) {
+    if (userRoles.contains("EMPLOYEE")) {
+      // Employees see only appointments assigned to them
       appointments = appointmentRepository.findByAssignedEmployeeIdAndRequestedDateTimeBetween(
           userId, LocalDateTime.now().minusYears(1), LocalDateTime.now().plusYears(1));
+    } else if (userRoles.contains("ADMIN")) {
+      // Admins see all appointments
+      appointments = appointmentRepository.findAll();
     } else {
+      // Customers see their own appointments
       appointments = appointmentRepository.findByCustomerIdOrderByRequestedDateTimeDesc(userId);
     }
 
@@ -145,7 +151,7 @@ public class AppointmentServiceImpl implements AppointmentService {
         .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
 
     boolean isAdmin = userRoles.contains("ADMIN");
-    boolean isAssignedEmployee = userRoles.contains("EMPLOYEE") && userId.equals(appointment.getAssignedEmployeeId());
+    boolean isAssignedEmployee = userRoles.contains("EMPLOYEE") && appointment.getAssignedEmployeeIds().contains(userId);
     boolean isCustomer = userId.equals(appointment.getCustomerId());
 
     if (!isAdmin && !isAssignedEmployee && !isCustomer) {
@@ -242,8 +248,8 @@ public class AppointmentServiceImpl implements AppointmentService {
     validateStatusTransition(appointment.getStatus(), newStatus);
 
     if ((newStatus == AppointmentStatus.CONFIRMED || newStatus == AppointmentStatus.IN_PROGRESS) &&
-        appointment.getAssignedEmployeeId() == null) {
-      appointment.setAssignedEmployeeId(employeeId);
+        (appointment.getAssignedEmployeeIds() == null || appointment.getAssignedEmployeeIds().isEmpty())) {
+      appointment.getAssignedEmployeeIds().add(employeeId);
     }
 
     appointment.setStatus(newStatus);
@@ -599,7 +605,7 @@ public class AppointmentServiceImpl implements AppointmentService {
         .id(appointment.getId())
         .customerId(appointment.getCustomerId())
         .vehicleId(appointment.getVehicleId())
-        .assignedEmployeeId(appointment.getAssignedEmployeeId())
+        .assignedEmployeeIds(appointment.getAssignedEmployeeIds())
         .assignedBayId(appointment.getAssignedBayId())
         .confirmationNumber(appointment.getConfirmationNumber())
         .serviceType(appointment.getServiceType())
@@ -608,6 +614,8 @@ public class AppointmentServiceImpl implements AppointmentService {
         .specialInstructions(appointment.getSpecialInstructions())
         .createdAt(appointment.getCreatedAt())
         .updatedAt(appointment.getUpdatedAt())
+        .vehicleArrivedAt(appointment.getVehicleArrivedAt())
+        .vehicleAcceptedByEmployeeId(appointment.getVehicleAcceptedByEmployeeId())
         .build();
   }
 
@@ -624,7 +632,7 @@ public class AppointmentServiceImpl implements AppointmentService {
   }
 
   private AppointmentSummaryDto convertToSummary(Appointment appointment, Map<String, String> bayIdToName) {
-    String bayName = appointment.getAssignedBayId() != null 
+    String bayName = appointment.getAssignedBayId() != null
         ? bayIdToName.getOrDefault(appointment.getAssignedBayId(), "Not Assigned")
         : "Not Assigned";
 
@@ -636,5 +644,147 @@ public class AppointmentServiceImpl implements AppointmentService {
         .status(appointment.getStatus())
         .bayName(bayName)
         .build();
+  }
+
+  @Override
+  public AppointmentResponseDto assignEmployees(String appointmentId, Set<String> employeeIds, String adminId) {
+    log.info("Admin {} assigning employees {} to appointment {}", adminId, employeeIds, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new IllegalArgumentException("Appointment not found: " + appointmentId));
+
+    // Validate appointment is in a valid state for assignment
+    if (appointment.getStatus() == AppointmentStatus.COMPLETED ||
+        appointment.getStatus() == AppointmentStatus.CANCELLED) {
+      throw new IllegalStateException("Cannot assign employees to a " + appointment.getStatus() + " appointment");
+    }
+
+    // Validate at least one employee is provided
+    if (employeeIds == null || employeeIds.isEmpty()) {
+      throw new IllegalArgumentException("At least one employee must be assigned");
+    }
+
+    // Assign the employees
+    appointment.setAssignedEmployeeIds(new HashSet<>(employeeIds));
+
+    // If appointment was PENDING, move it to CONFIRMED
+    if (appointment.getStatus() == AppointmentStatus.PENDING) {
+      appointment.setStatus(AppointmentStatus.CONFIRMED);
+    }
+
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+    log.info("Successfully assigned {} employees to appointment {}", employeeIds.size(), appointmentId);
+
+    // Notify the customer that employees have been assigned
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "INFO",
+        "Appointment Confirmed - Employees Assigned",
+        String.format("Your appointment (%s) has been confirmed. %d employee(s) have been assigned to your service.",
+            appointment.getConfirmationNumber(),
+            employeeIds.size()),
+        appointmentId
+    );
+
+    // Notify each assigned employee
+    for (String employeeId : employeeIds) {
+      notificationClient.sendAppointmentNotification(
+          employeeId,
+          "INFO",
+          "New Appointment Assignment",
+          String.format("You have been assigned to appointment %s for %s on %s",
+              appointment.getConfirmationNumber(),
+              appointment.getServiceType(),
+              appointment.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a"))),
+          appointmentId
+      );
+    }
+
+    return convertToDto(savedAppointment);
+  }
+
+  @Override
+  public AppointmentResponseDto acceptVehicleArrival(String appointmentId, String employeeId) {
+    log.info("Employee {} accepting vehicle arrival for appointment {}", employeeId, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    // Verify employee is assigned to this appointment
+    if (!appointment.getAssignedEmployeeIds().contains(employeeId)) {
+      throw new UnauthorizedAccessException("Employee is not assigned to this appointment");
+    }
+
+    // Verify appointment is in CONFIRMED status
+    if (appointment.getStatus() != AppointmentStatus.CONFIRMED) {
+      throw new IllegalStateException("Can only accept vehicle arrival for CONFIRMED appointments. Current status: " + appointment.getStatus());
+    }
+
+    // Update appointment with vehicle arrival info
+    appointment.setVehicleArrivedAt(LocalDateTime.now());
+    appointment.setVehicleAcceptedByEmployeeId(employeeId);
+    appointment.setStatus(AppointmentStatus.IN_PROGRESS);
+
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+
+    // Create time log entry to start tracking time
+    String description = String.format("Work started on %s for appointment %s",
+        appointment.getServiceType(),
+        appointment.getConfirmationNumber());
+    timeLoggingClient.startTimeLog(employeeId, appointmentId, description);
+
+    // Notify customer that work has started
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "INFO",
+        "Work Started",
+        String.format("Your vehicle has arrived and work has started on your %s appointment (Confirmation: %s)",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    log.info("Vehicle arrival accepted. Appointment {} status changed to IN_PROGRESS", appointmentId);
+    return convertToDto(savedAppointment);
+  }
+
+  @Override
+  public AppointmentResponseDto completeWork(String appointmentId, String employeeId) {
+    log.info("Employee {} marking work as complete for appointment {}", employeeId, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    // Verify employee is assigned to this appointment
+    if (!appointment.getAssignedEmployeeIds().contains(employeeId)) {
+      throw new UnauthorizedAccessException("Employee is not assigned to this appointment");
+    }
+
+    // Verify appointment is in IN_PROGRESS status
+    if (appointment.getStatus() != AppointmentStatus.IN_PROGRESS) {
+      throw new IllegalStateException("Can only complete appointments in IN_PROGRESS status. Current status: " + appointment.getStatus());
+    }
+
+    // Update appointment status to COMPLETED
+    appointment.setStatus(AppointmentStatus.COMPLETED);
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+
+    // Notify customer that work is complete
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "SUCCESS",
+        "Work Completed",
+        String.format("Your %s service has been completed! (Confirmation: %s). Please proceed to payment.",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    // Notify admin about completion
+    // Note: In a real system, you'd fetch admin user IDs from a service
+    // For now, we'll just log it
+    log.info("Appointment {} marked as COMPLETED. Customer and admin should be notified for payment.", appointmentId);
+
+    return convertToDto(savedAppointment);
   }
 }

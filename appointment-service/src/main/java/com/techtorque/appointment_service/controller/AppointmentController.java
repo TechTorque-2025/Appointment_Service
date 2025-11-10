@@ -153,4 +153,38 @@ public class AppointmentController {
     CalendarResponseDto calendar = appointmentService.getMonthlyCalendar(yearMonth, userRoles);
     return ResponseEntity.ok(calendar);
   }
+
+  @Operation(summary = "Assign employees to an appointment (admin only)")
+  @PostMapping("/{appointmentId}/assign-employees")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<AppointmentResponseDto> assignEmployees(
+          @PathVariable String appointmentId,
+          @Valid @RequestBody AssignEmployeesRequestDto dto,
+          @RequestHeader("X-User-Subject") String adminId) {
+
+    AppointmentResponseDto updated = appointmentService.assignEmployees(appointmentId, dto.getEmployeeIds(), adminId);
+    return ResponseEntity.ok(updated);
+  }
+
+  @Operation(summary = "Employee accepts vehicle arrival and starts work")
+  @PostMapping("/{appointmentId}/accept-vehicle")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<AppointmentResponseDto> acceptVehicleArrival(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    AppointmentResponseDto updated = appointmentService.acceptVehicleArrival(appointmentId, employeeId);
+    return ResponseEntity.ok(updated);
+  }
+
+  @Operation(summary = "Employee marks work as complete")
+  @PostMapping("/{appointmentId}/complete")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<AppointmentResponseDto> completeWork(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    AppointmentResponseDto updated = appointmentService.completeWork(appointmentId, employeeId);
+    return ResponseEntity.ok(updated);
+  }
 }
