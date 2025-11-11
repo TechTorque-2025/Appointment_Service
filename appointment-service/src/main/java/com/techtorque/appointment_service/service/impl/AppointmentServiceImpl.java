@@ -6,6 +6,7 @@ import com.techtorque.appointment_service.entity.*;
 import com.techtorque.appointment_service.exception.*;
 import com.techtorque.appointment_service.repository.*;
 import com.techtorque.appointment_service.service.AppointmentService;
+import com.techtorque.appointment_service.service.ServiceTypeService;
 import com.techtorque.appointment_service.service.AppointmentStateTransitionValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,7 +28,6 @@ public class AppointmentServiceImpl implements AppointmentService {
   private final TimeSessionRepository timeSessionRepository;
   private final com.techtorque.appointment_service.service.NotificationClient notificationClient;
   private final com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient;
-  private final com.techtorque.appointment_service.AppointmentStateTransitionValidator stateTransitionValidator;
   private final AppointmentStateTransitionValidator stateTransitionValidator;
   private static final int SLOT_INTERVAL_MINUTES = 30;
 
@@ -40,8 +40,8 @@ public class AppointmentServiceImpl implements AppointmentService {
       TimeSessionRepository timeSessionRepository,
       com.techtorque.appointment_service.service.NotificationClient notificationClient,
       com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient,
-      com.techtorque.appointment_service.AppointmentStateTransitionValidator stateTransitionValidator) {
       AppointmentStateTransitionValidator stateTransitionValidator) {
+    this.appointmentRepository = appointmentRepository; // assign required repository
     this.serviceTypeService = serviceTypeService;
     this.serviceBayRepository = serviceBayRepository;
     this.businessHoursRepository = businessHoursRepository;
@@ -181,7 +181,8 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     if (appointment.getStatus() != AppointmentStatus.PENDING &&
         appointment.getStatus() != AppointmentStatus.CONFIRMED) {
-      throw new InvalidStatusTransitionException("Cannot update appointment with status: " + appointment.getStatus());
+      throw new InvalidStatusTransitionException("Cannot update appointment with status: " + appointment.getStatus() +
+          ". Once work has started (IN_PROGRESS status), appointments cannot be rescheduled.");
     }
 
     if (dto.getRequestedDateTime() != null) {
@@ -221,6 +222,12 @@ public class AppointmentServiceImpl implements AppointmentService {
     if (userRoles.contains("CUSTOMER") && !userRoles.contains("EMPLOYEE") && !userRoles.contains("ADMIN")) {
       appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, userId)
           .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, userId));
+
+      // Customers cannot cancel appointments that are IN_PROGRESS or beyond
+      if (appointment.getStatus() == AppointmentStatus.IN_PROGRESS) {
+        throw new InvalidStatusTransitionException(
+            "Cannot cancel an appointment that is currently in progress. Please contact support for assistance.");
+      }
     } else {
       // Employees and admins can cancel any appointment
       appointment = appointmentRepository.findById(appointmentId)
