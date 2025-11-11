@@ -2,137 +2,140 @@ package com.techtorque.appointment_service.service.impl;
 
 import com.techtorque.appointment_service.dto.request.ServiceTypeRequestDto;
 import com.techtorque.appointment_service.dto.response.ServiceTypeResponseDto;
-import com.techtorque.appointment_service.entity.ServiceType;
-import com.techtorque.appointment_service.repository.ServiceTypeRepository;
 import com.techtorque.appointment_service.service.ServiceTypeService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClient;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @Transactional
 @Slf4j
 public class ServiceTypeServiceImpl implements ServiceTypeService {
 
-  private final ServiceTypeRepository serviceTypeRepository;
+  private final WebClient adminServiceWebClient;
 
-  public ServiceTypeServiceImpl(ServiceTypeRepository serviceTypeRepository) {
-    this.serviceTypeRepository = serviceTypeRepository;
+  public ServiceTypeServiceImpl(@Qualifier("adminServiceWebClient") WebClient adminServiceWebClient) {
+    this.adminServiceWebClient = adminServiceWebClient;
   }
 
   @Override
   public List<ServiceTypeResponseDto> getAllServiceTypes(boolean includeInactive) {
-    log.info("Fetching all service types (includeInactive={})", includeInactive);
+    log.info("Fetching all service types from Admin Service (includeInactive={})", includeInactive);
 
-    List<ServiceType> serviceTypes = includeInactive 
-        ? serviceTypeRepository.findAll()
-        : serviceTypeRepository.findByActiveTrue();
+    try {
+      // Call Admin Service public endpoint to get active service types
+      // Note: We ignore includeInactive parameter because public endpoint only returns active types
+      List<ServiceTypeResponseDto> serviceTypes = adminServiceWebClient.get()
+          .uri("/public/service-types")
+          .retrieve()
+          .bodyToFlux(ServiceTypeResponseDto.class)
+          .collectList()
+          .block();
 
-    return serviceTypes.stream()
-        .map(this::convertToDto)
-        .collect(Collectors.toList());
+      log.info("Retrieved {} service types from Admin Service", serviceTypes != null ? serviceTypes.size() : 0);
+      return serviceTypes != null ? serviceTypes : List.of();
+    } catch (Exception e) {
+      log.error("Failed to fetch service types from Admin Service", e);
+      throw new RuntimeException("Failed to fetch service types: " + e.getMessage());
+    }
   }
 
   @Override
   public ServiceTypeResponseDto getServiceTypeById(String id) {
-    log.info("Fetching service type with ID: {}", id);
+    log.info("Fetching service type with ID from Admin Service: {}", id);
 
-    ServiceType serviceType = serviceTypeRepository.findById(id)
-        .orElseThrow(() -> new IllegalArgumentException("Service type not found with ID: " + id));
+    try {
+      ServiceTypeResponseDto serviceType = adminServiceWebClient.get()
+          .uri("/public/service-types/" + id)
+          .retrieve()
+          .bodyToMono(ServiceTypeResponseDto.class)
+          .block();
 
-    return convertToDto(serviceType);
+      if (serviceType == null) {
+        throw new IllegalArgumentException("Service type not found with ID: " + id);
+      }
+
+      return serviceType;
+    } catch (Exception e) {
+      log.error("Failed to fetch service type from Admin Service", e);
+      throw new RuntimeException("Failed to fetch service type: " + e.getMessage());
+    }
   }
 
   @Override
   public ServiceTypeResponseDto createServiceType(ServiceTypeRequestDto dto) {
-    log.info("Creating new service type: {}", dto.getName());
+    log.info("Creating service type in Admin Service: {}", dto.getName());
 
-    // Check if service type with same name already exists
-    serviceTypeRepository.findByNameAndActiveTrue(dto.getName()).ifPresent(existing -> {
-      throw new IllegalArgumentException("Service type with name '" + dto.getName() + "' already exists");
-    });
+    try {
+      ServiceTypeResponseDto created = adminServiceWebClient.post()
+          .uri("/admin/service-types")
+          .bodyValue(dto)
+          .retrieve()
+          .bodyToMono(ServiceTypeResponseDto.class)
+          .block();
 
-    ServiceType serviceType = ServiceType.builder()
-        .name(dto.getName())
-        .category(dto.getCategory())
-        .basePriceLKR(dto.getBasePriceLKR())
-        .estimatedDurationMinutes(dto.getEstimatedDurationMinutes())
-        .description(dto.getDescription())
-        .active(dto.getActive())
-        .build();
-
-    ServiceType saved = serviceTypeRepository.save(serviceType);
-    log.info("Service type created successfully with ID: {}", saved.getId());
-
-    return convertToDto(saved);
+      log.info("Service type created successfully in Admin Service");
+      return created;
+    } catch (Exception e) {
+      log.error("Failed to create service type in Admin Service", e);
+      throw new RuntimeException("Failed to create service type: " + e.getMessage());
+    }
   }
 
   @Override
   public ServiceTypeResponseDto updateServiceType(String id, ServiceTypeRequestDto dto) {
-    log.info("Updating service type with ID: {}", id);
+    log.info("Updating service type in Admin Service with ID: {}", id);
 
-    ServiceType serviceType = serviceTypeRepository.findById(id)
-        .orElseThrow(() -> new IllegalArgumentException("Service type not found with ID: " + id));
+    try {
+      ServiceTypeResponseDto updated = adminServiceWebClient.put()
+          .uri("/admin/service-types/" + id)
+          .bodyValue(dto)
+          .retrieve()
+          .bodyToMono(ServiceTypeResponseDto.class)
+          .block();
 
-    // Check if new name conflicts with existing service types
-    if (!serviceType.getName().equals(dto.getName())) {
-      serviceTypeRepository.findByNameAndActiveTrue(dto.getName()).ifPresent(existing -> {
-        if (!existing.getId().equals(id)) {
-          throw new IllegalArgumentException("Service type with name '" + dto.getName() + "' already exists");
-        }
-      });
+      log.info("Service type updated successfully in Admin Service");
+      return updated;
+    } catch (Exception e) {
+      log.error("Failed to update service type in Admin Service", e);
+      throw new RuntimeException("Failed to update service type: " + e.getMessage());
     }
-
-    serviceType.setName(dto.getName());
-    serviceType.setCategory(dto.getCategory());
-    serviceType.setBasePriceLKR(dto.getBasePriceLKR());
-    serviceType.setEstimatedDurationMinutes(dto.getEstimatedDurationMinutes());
-    serviceType.setDescription(dto.getDescription());
-    serviceType.setActive(dto.getActive());
-
-    ServiceType updated = serviceTypeRepository.save(serviceType);
-    log.info("Service type updated successfully: {}", id);
-
-    return convertToDto(updated);
   }
 
   @Override
   public void deleteServiceType(String id) {
-    log.info("Deactivating service type with ID: {}", id);
+    log.info("Deleting service type in Admin Service with ID: {}", id);
 
-    ServiceType serviceType = serviceTypeRepository.findById(id)
-        .orElseThrow(() -> new IllegalArgumentException("Service type not found with ID: " + id));
+    try {
+      adminServiceWebClient.delete()
+          .uri("/admin/service-types/" + id)
+          .retrieve()
+          .bodyToMono(Void.class)
+          .block();
 
-    serviceType.setActive(false);
-    serviceTypeRepository.save(serviceType);
-
-    log.info("Service type deactivated successfully: {}", id);
+      log.info("Service type deleted successfully in Admin Service");
+    } catch (Exception e) {
+      log.error("Failed to delete service type in Admin Service", e);
+      throw new RuntimeException("Failed to delete service type: " + e.getMessage());
+    }
   }
 
   @Override
   public List<ServiceTypeResponseDto> getServiceTypesByCategory(String category) {
-    log.info("Fetching service types by category: {}", category);
+    log.info("Fetching service types by category from Admin Service: {}", category);
 
-    List<ServiceType> serviceTypes = serviceTypeRepository.findByCategoryAndActiveTrue(category);
-
-    return serviceTypes.stream()
-        .map(this::convertToDto)
-        .collect(Collectors.toList());
-  }
-
-  private ServiceTypeResponseDto convertToDto(ServiceType serviceType) {
-    return ServiceTypeResponseDto.builder()
-        .id(serviceType.getId())
-        .name(serviceType.getName())
-        .category(serviceType.getCategory())
-        .basePriceLKR(serviceType.getBasePriceLKR())
-        .estimatedDurationMinutes(serviceType.getEstimatedDurationMinutes())
-        .description(serviceType.getDescription())
-        .active(serviceType.getActive())
-        .createdAt(serviceType.getCreatedAt())
-        .updatedAt(serviceType.getUpdatedAt())
-        .build();
+    try {
+      // Get all active service types and filter by category
+      List<ServiceTypeResponseDto> allServiceTypes = getAllServiceTypes(false);
+      return allServiceTypes.stream()
+          .filter(st -> category.equalsIgnoreCase(st.getCategory()))
+          .toList();
+    } catch (Exception e) {
+      log.error("Failed to fetch service types by category", e);
+      throw new RuntimeException("Failed to fetch service types by category: " + e.getMessage());
+    }
   }
 }

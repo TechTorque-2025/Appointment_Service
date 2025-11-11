@@ -8,6 +8,8 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "appointments")
@@ -27,7 +29,11 @@ public class Appointment {
   @Column(nullable = false)
   private String vehicleId; // Foreign key to the vehicle
 
-  private String assignedEmployeeId; // Can be null initially
+  @ElementCollection(fetch = FetchType.EAGER)
+  @CollectionTable(name = "appointment_assigned_employees", joinColumns = @JoinColumn(name = "appointment_id"))
+  @Column(name = "employee_id")
+  @Builder.Default
+  private Set<String> assignedEmployeeIds = new HashSet<>(); // Multiple employees can be assigned
 
   private String assignedBayId; // Foreign key to ServiceBay
 
@@ -54,4 +60,8 @@ public class Appointment {
   @UpdateTimestamp
   @Column(nullable = false)
   private LocalDateTime updatedAt;
+
+  // Vehicle arrival tracking
+  private LocalDateTime vehicleArrivedAt; // When employee confirmed vehicle arrival
+  private String vehicleAcceptedByEmployeeId; // Which employee accepted the vehicle
 }

@@ -15,9 +15,8 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/service-types")
-@Tag(name = "Service Type Management", description = "Endpoints for managing service types (Admin only)")
+@Tag(name = "Service Type Management", description = "Endpoints for managing service types")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyRole('ADMIN', 'EMPLOYEE')")
 public class ServiceTypeController {
 
   private final ServiceTypeService serviceTypeService;
@@ -28,6 +27,7 @@ public class ServiceTypeController {
 
   @Operation(summary = "Get all service types")
   @GetMapping
+  @PreAuthorize("hasAnyRole('CUSTOMER', 'EMPLOYEE', 'ADMIN')")
   public ResponseEntity<List<ServiceTypeResponseDto>> getAllServiceTypes(
           @RequestParam(required = false, defaultValue = "false") boolean includeInactive) {
     List<ServiceTypeResponseDto> serviceTypes = serviceTypeService.getAllServiceTypes(includeInactive);
@@ -36,6 +36,7 @@ public class ServiceTypeController {
 
   @Operation(summary = "Get service type by ID")
   @GetMapping("/{id}")
+  @PreAuthorize("hasAnyRole('CUSTOMER', 'EMPLOYEE', 'ADMIN')")
   public ResponseEntity<ServiceTypeResponseDto> getServiceTypeById(@PathVariable String id) {
     ServiceTypeResponseDto serviceType = serviceTypeService.getServiceTypeById(id);
     return ResponseEntity.ok(serviceType);
