@@ -92,14 +92,15 @@ public class AppointmentController {
     return ResponseEntity.ok(updated);
   }
 
-  @Operation(summary = "Cancel an appointment (customer only)")
+  @Operation(summary = "Cancel an appointment (customer, employee, or admin)")
   @DeleteMapping("/{appointmentId}")
-  @PreAuthorize("hasRole('CUSTOMER')")
+  @PreAuthorize("hasAnyRole('CUSTOMER', 'EMPLOYEE', 'ADMIN')")
   public ResponseEntity<Void> cancelAppointment(
           @PathVariable String appointmentId,
-          @RequestHeader("X-User-Subject") String customerId) {
+          @RequestHeader("X-User-Subject") String userId,
+          @RequestHeader("X-User-Roles") String userRoles) {
 
-    appointmentService.cancelAppointment(appointmentId, customerId);
+    appointmentService.cancelAppointment(appointmentId, userId, userRoles);
     return ResponseEntity.noContent().build();
   }
 
@@ -151,5 +152,88 @@ public class AppointmentController {
     YearMonth yearMonth = YearMonth.of(year, month);
     CalendarResponseDto calendar = appointmentService.getMonthlyCalendar(yearMonth, userRoles);
     return ResponseEntity.ok(calendar);
+  }
+
+  @Operation(summary = "Assign employees to an appointment (admin only)")
+  @PostMapping("/{appointmentId}/assign-employees")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ResponseEntity<AppointmentResponseDto> assignEmployees(
+          @PathVariable String appointmentId,
+          @Valid @RequestBody AssignEmployeesRequestDto dto,
+          @RequestHeader("X-User-Subject") String adminId) {
+
+    AppointmentResponseDto updated = appointmentService.assignEmployees(appointmentId, dto.getEmployeeIds(), adminId);
+    return ResponseEntity.ok(updated);
+  }
+
+  @Operation(summary = "Employee accepts vehicle arrival and starts work")
+  @PostMapping("/{appointmentId}/accept-vehicle")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<AppointmentResponseDto> acceptVehicleArrival(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    AppointmentResponseDto updated = appointmentService.acceptVehicleArrival(appointmentId, employeeId);
+    return ResponseEntity.ok(updated);
+  }
+
+  @Operation(summary = "Employee marks work as complete")
+  @PostMapping("/{appointmentId}/complete")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<AppointmentResponseDto> completeWork(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    AppointmentResponseDto updated = appointmentService.completeWork(appointmentId, employeeId);
+    return ResponseEntity.ok(updated);
+  }
+
+  @Operation(summary = "Clock in to start time tracking for an appointment")
+  @PostMapping("/{appointmentId}/clock-in")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<TimeSessionResponse> clockIn(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    TimeSessionResponse session = appointmentService.clockIn(appointmentId, employeeId);
+    return ResponseEntity.ok(session);
+  }
+
+  @Operation(summary = "Clock out to stop time tracking for an appointment")
+  @PostMapping("/{appointmentId}/clock-out")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<TimeSessionResponse> clockOut(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    TimeSessionResponse session = appointmentService.clockOut(appointmentId, employeeId);
+    return ResponseEntity.ok(session);
+  }
+
+  @Operation(summary = "Get active time session for an appointment")
+  @GetMapping("/{appointmentId}/time-session")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<TimeSessionResponse> getActiveTimeSession(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    TimeSessionResponse session = appointmentService.getActiveTimeSession(appointmentId, employeeId);
+    
+    if (session == null) {
+      return ResponseEntity.noContent().build();
+    }
+    
+    return ResponseEntity.ok(session);
+  }
+
+  @Operation(summary = "Customer confirms completion of appointment (customer only)")
+  @PostMapping("/{appointmentId}/confirm-completion")
+  @PreAuthorize("hasRole('CUSTOMER')")
+  public ResponseEntity<AppointmentResponseDto> confirmCompletion(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String customerId) {
+
+    AppointmentResponseDto updated = appointmentService.confirmCompletion(appointmentId, customerId);
+    return ResponseEntity.ok(updated);
   }
 }

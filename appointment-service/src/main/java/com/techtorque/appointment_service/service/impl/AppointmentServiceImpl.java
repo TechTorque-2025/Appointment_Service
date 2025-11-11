@@ -6,6 +6,8 @@ import com.techtorque.appointment_service.entity.*;
 import com.techtorque.appointment_service.exception.*;
 import com.techtorque.appointment_service.repository.*;
 import com.techtorque.appointment_service.service.AppointmentService;
+import com.techtorque.appointment_service.service.ServiceTypeService;
+import com.techtorque.appointment_service.service.AppointmentStateTransitionValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,31 +21,46 @@ import java.util.stream.Collectors;
 public class AppointmentServiceImpl implements AppointmentService {
 
   private final AppointmentRepository appointmentRepository;
-  private final ServiceTypeRepository serviceTypeRepository;
+  private final ServiceTypeService serviceTypeService;
   private final ServiceBayRepository serviceBayRepository;
   private final BusinessHoursRepository businessHoursRepository;
   private final HolidayRepository holidayRepository;
-
+  private final TimeSessionRepository timeSessionRepository;
+  private final com.techtorque.appointment_service.service.NotificationClient notificationClient;
+  private final com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient;
+  private final AppointmentStateTransitionValidator stateTransitionValidator;
   private static final int SLOT_INTERVAL_MINUTES = 30;
 
   public AppointmentServiceImpl(
       AppointmentRepository appointmentRepository,
-      ServiceTypeRepository serviceTypeRepository,
+      ServiceTypeService serviceTypeService,
       ServiceBayRepository serviceBayRepository,
       BusinessHoursRepository businessHoursRepository,
-      HolidayRepository holidayRepository) {
-    this.appointmentRepository = appointmentRepository;
-    this.serviceTypeRepository = serviceTypeRepository;
+      HolidayRepository holidayRepository,
+      TimeSessionRepository timeSessionRepository,
+      com.techtorque.appointment_service.service.NotificationClient notificationClient,
+      com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient,
+      AppointmentStateTransitionValidator stateTransitionValidator) {
+    this.appointmentRepository = appointmentRepository; // assign required repository
+    this.serviceTypeService = serviceTypeService;
     this.serviceBayRepository = serviceBayRepository;
     this.businessHoursRepository = businessHoursRepository;
     this.holidayRepository = holidayRepository;
+    this.timeSessionRepository = timeSessionRepository;
+    this.notificationClient = notificationClient;
+    this.timeLoggingClient = timeLoggingClient;
+    this.stateTransitionValidator = stateTransitionValidator;
   }
 
   @Override
   public AppointmentResponseDto bookAppointment(AppointmentRequestDto dto, String customerId) {
     log.info("Booking appointment for customer: {}", customerId);
 
-    ServiceType serviceType = serviceTypeRepository.findByNameAndActiveTrue(dto.getServiceType())
+    // Fetch service type from Admin Service (via ServiceTypeService)
+    List<ServiceTypeResponseDto> allServiceTypes = serviceTypeService.getAllServiceTypes(false);
+    ServiceTypeResponseDto serviceType = allServiceTypes.stream()
+        .filter(st -> st.getName().equals(dto.getServiceType()))
+        .findFirst()
         .orElseThrow(() -> new IllegalArgumentException("Invalid service type: " + dto.getServiceType()));
 
     validateAppointmentDateTime(dto.getRequestedDateTime(), serviceType.getEstimatedDurationMinutes());
@@ -65,6 +82,17 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment savedAppointment = appointmentRepository.save(appointment);
     log.info("Appointment booked successfully with confirmation: {}", confirmationNumber);
 
+    // Send notification to customer
+    notificationClient.sendAppointmentNotification(
+        customerId,
+        "INFO",
+        "Appointment Booked - " + dto.getServiceType(),
+        String.format("Your appointment has been booked for %s. Confirmation number: %s. Pending approval.",
+            dto.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a")),
+            confirmationNumber),
+        savedAppointment.getId()
+    );
+
     return convertToDto(savedAppointment);
   }
 
@@ -74,12 +102,15 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     List<Appointment> appointments;
 
-    if (userRoles.contains("ADMIN") || userRoles.contains("EMPLOYEE")) {
-      appointments = appointmentRepository.findAll();
-    } else if (userRoles.contains("EMPLOYEE")) {
+    if (userRoles.contains("EMPLOYEE")) {
+      // Employees see only appointments assigned to them
       appointments = appointmentRepository.findByAssignedEmployeeIdAndRequestedDateTimeBetween(
           userId, LocalDateTime.now().minusYears(1), LocalDateTime.now().plusYears(1));
+    } else if (userRoles.contains("ADMIN")) {
+      // Admins see all appointments
+      appointments = appointmentRepository.findAll();
     } else {
+      // Customers see their own appointments
       appointments = appointmentRepository.findByCustomerIdOrderByRequestedDateTimeDesc(userId);
     }
 
@@ -131,7 +162,7 @@ public class AppointmentServiceImpl implements AppointmentService {
         .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
 
     boolean isAdmin = userRoles.contains("ADMIN");
-    boolean isAssignedEmployee = userRoles.contains("EMPLOYEE") && userId.equals(appointment.getAssignedEmployeeId());
+    boolean isAssignedEmployee = userRoles.contains("EMPLOYEE") && appointment.getAssignedEmployeeIds().contains(userId);
     boolean isCustomer = userId.equals(appointment.getCustomerId());
 
     if (!isAdmin && !isAssignedEmployee && !isCustomer) {
@@ -150,7 +181,8 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     if (appointment.getStatus() != AppointmentStatus.PENDING &&
         appointment.getStatus() != AppointmentStatus.CONFIRMED) {
-      throw new InvalidStatusTransitionException("Cannot update appointment with status: " + appointment.getStatus());
+      throw new InvalidStatusTransitionException("Cannot update appointment with status: " + appointment.getStatus() +
+          ". Once work has started (IN_PROGRESS status), appointments cannot be rescheduled.");
     }
 
     if (dto.getRequestedDateTime() != null) {
@@ -166,15 +198,41 @@ public class AppointmentServiceImpl implements AppointmentService {
     Appointment updatedAppointment = appointmentRepository.save(appointment);
     log.info("Appointment updated successfully: {}", appointmentId);
 
+    // Send notification to customer
+    notificationClient.sendAppointmentNotification(
+        customerId,
+        "INFO",
+        "Appointment Updated - " + appointment.getServiceType(),
+        String.format("Your appointment has been updated to %s. Confirmation: %s",
+            appointment.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a")),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
     return convertToDto(updatedAppointment);
   }
 
   @Override
-  public void cancelAppointment(String appointmentId, String customerId) {
-    log.info("Cancelling appointment: {} for customer: {}", appointmentId, customerId);
+  public void cancelAppointment(String appointmentId, String userId, String userRoles) {
+    log.info("Cancelling appointment: {} by user: {} with roles: {}", appointmentId, userId, userRoles);
 
-    Appointment appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, customerId)
-        .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, customerId));
+    Appointment appointment;
+
+    // Customers can only cancel their own appointments
+    if (userRoles.contains("CUSTOMER") && !userRoles.contains("EMPLOYEE") && !userRoles.contains("ADMIN")) {
+      appointment = appointmentRepository.findByIdAndCustomerId(appointmentId, userId)
+          .orElseThrow(() -> new AppointmentNotFoundException(appointmentId, userId));
+
+      // Customers cannot cancel appointments that are IN_PROGRESS or beyond
+      if (appointment.getStatus() == AppointmentStatus.IN_PROGRESS) {
+        throw new InvalidStatusTransitionException(
+            "Cannot cancel an appointment that is currently in progress. Please contact support for assistance.");
+      }
+    } else {
+      // Employees and admins can cancel any appointment
+      appointment = appointmentRepository.findById(appointmentId)
+          .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+    }
 
     if (appointment.getStatus() == AppointmentStatus.COMPLETED) {
       throw new InvalidStatusTransitionException("Cannot cancel a completed appointment");
@@ -182,6 +240,18 @@ public class AppointmentServiceImpl implements AppointmentService {
 
     appointment.setStatus(AppointmentStatus.CANCELLED);
     appointmentRepository.save(appointment);
+
+    // Send notification to customer
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "WARNING",
+        "Appointment Cancelled",
+        String.format("Your appointment for %s on %s has been cancelled. Confirmation: %s",
+            appointment.getServiceType(),
+            appointment.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a")),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
 
     log.info("Appointment cancelled successfully: {}", appointmentId);
   }
@@ -196,12 +266,46 @@ public class AppointmentServiceImpl implements AppointmentService {
     validateStatusTransition(appointment.getStatus(), newStatus);
 
     if ((newStatus == AppointmentStatus.CONFIRMED || newStatus == AppointmentStatus.IN_PROGRESS) &&
-        appointment.getAssignedEmployeeId() == null) {
-      appointment.setAssignedEmployeeId(employeeId);
+        (appointment.getAssignedEmployeeIds() == null || appointment.getAssignedEmployeeIds().isEmpty())) {
+      appointment.getAssignedEmployeeIds().add(employeeId);
     }
 
     appointment.setStatus(newStatus);
     Appointment updatedAppointment = appointmentRepository.save(appointment);
+
+    // Send status change notification to customer
+    String statusMessage;
+    String notificationType = "INFO";
+
+    switch(newStatus) {
+      case CONFIRMED:
+        statusMessage = "Your appointment has been confirmed and scheduled";
+        notificationType = "SUCCESS";
+        break;
+      case IN_PROGRESS:
+        statusMessage = "Your vehicle service has started. Our team is working on your " + appointment.getServiceType();
+        notificationType = "INFO";
+        break;
+      case COMPLETED:
+        statusMessage = "Your service is complete! Thank you for choosing our service";
+        notificationType = "SUCCESS";
+        break;
+      case NO_SHOW:
+        statusMessage = "You missed your scheduled appointment. Please contact us to reschedule";
+        notificationType = "WARNING";
+        break;
+      default:
+        statusMessage = "Appointment status updated to " + newStatus;
+        notificationType = "INFO";
+    }
+
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        notificationType,
+        "Appointment Status: " + newStatus,
+        statusMessage + ". Confirmation: " + appointment.getConfirmationNumber(),
+        appointmentId
+    );
 
     log.info("Appointment status updated successfully: {}", appointmentId);
 
@@ -299,6 +403,9 @@ public class AppointmentServiceImpl implements AppointmentService {
     LocalDate date = dateTime.toLocalDate();
     LocalTime time = dateTime.toLocalTime();
 
+    log.info("DEBUG: Validating appointment - dateTime: {}, date: {}, time: {}, duration: {} minutes",
+        dateTime, date, time, durationMinutes);
+
     if (dateTime.isBefore(LocalDateTime.now())) {
       throw new IllegalArgumentException("Appointment date must be in the future");
     }
@@ -310,17 +417,28 @@ public class AppointmentServiceImpl implements AppointmentService {
     BusinessHours businessHours = businessHoursRepository.findByDayOfWeek(date.getDayOfWeek())
         .orElseThrow(() -> new IllegalArgumentException("No business hours configured for this day"));
 
+    log.info("DEBUG: Business hours for {} - Open: {}, Close: {}, IsOpen: {}",
+        date.getDayOfWeek(), businessHours.getOpenTime(), businessHours.getCloseTime(), businessHours.getIsOpen());
+
     if (!businessHours.getIsOpen()) {
       throw new IllegalArgumentException("Shop is closed on " + date.getDayOfWeek());
     }
 
-    if (time.isBefore(businessHours.getOpenTime()) || 
+    LocalTime endTime = time.plusMinutes(durationMinutes);
+    log.info("DEBUG: Time check - Requested time: {}, End time: {}, Open time: {}, Close time: {}",
+        time, endTime, businessHours.getOpenTime(), businessHours.getCloseTime());
+    log.info("DEBUG: Validation checks - isBefore open: {}, isAfter close: {}",
+        time.isBefore(businessHours.getOpenTime()), endTime.isAfter(businessHours.getCloseTime()));
+
+    if (time.isBefore(businessHours.getOpenTime()) ||
         time.plusMinutes(durationMinutes).isAfter(businessHours.getCloseTime())) {
+      log.error("VALIDATION FAILED: Time {} with duration {} minutes is outside business hours {} - {}",
+          time, durationMinutes, businessHours.getOpenTime(), businessHours.getCloseTime());
       throw new IllegalArgumentException("Requested time is outside business hours");
     }
 
     if (businessHours.getBreakStartTime() != null && businessHours.getBreakEndTime() != null) {
-      if (!time.isBefore(businessHours.getBreakStartTime()) && 
+      if (!time.isBefore(businessHours.getBreakStartTime()) &&
           time.isBefore(businessHours.getBreakEndTime())) {
         throw new IllegalArgumentException("Cannot book appointment during break time");
       }
@@ -505,7 +623,7 @@ public class AppointmentServiceImpl implements AppointmentService {
         .id(appointment.getId())
         .customerId(appointment.getCustomerId())
         .vehicleId(appointment.getVehicleId())
-        .assignedEmployeeId(appointment.getAssignedEmployeeId())
+        .assignedEmployeeIds(appointment.getAssignedEmployeeIds())
         .assignedBayId(appointment.getAssignedBayId())
         .confirmationNumber(appointment.getConfirmationNumber())
         .serviceType(appointment.getServiceType())
@@ -514,6 +632,8 @@ public class AppointmentServiceImpl implements AppointmentService {
         .specialInstructions(appointment.getSpecialInstructions())
         .createdAt(appointment.getCreatedAt())
         .updatedAt(appointment.getUpdatedAt())
+        .vehicleArrivedAt(appointment.getVehicleArrivedAt())
+        .vehicleAcceptedByEmployeeId(appointment.getVehicleAcceptedByEmployeeId())
         .build();
   }
 
@@ -530,7 +650,7 @@ public class AppointmentServiceImpl implements AppointmentService {
   }
 
   private AppointmentSummaryDto convertToSummary(Appointment appointment, Map<String, String> bayIdToName) {
-    String bayName = appointment.getAssignedBayId() != null 
+    String bayName = appointment.getAssignedBayId() != null
         ? bayIdToName.getOrDefault(appointment.getAssignedBayId(), "Not Assigned")
         : "Not Assigned";
 
@@ -542,5 +662,347 @@ public class AppointmentServiceImpl implements AppointmentService {
         .status(appointment.getStatus())
         .bayName(bayName)
         .build();
+  }
+
+  @Override
+  public AppointmentResponseDto assignEmployees(String appointmentId, Set<String> employeeIds, String adminId) {
+    log.info("Admin {} assigning employees {} to appointment {}", adminId, employeeIds, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new IllegalArgumentException("Appointment not found: " + appointmentId));
+
+    // Validate appointment is in a valid state for assignment
+    if (appointment.getStatus() == AppointmentStatus.COMPLETED ||
+        appointment.getStatus() == AppointmentStatus.CANCELLED) {
+      throw new IllegalStateException("Cannot assign employees to a " + appointment.getStatus() + " appointment");
+    }
+
+    // Validate at least one employee is provided
+    if (employeeIds == null || employeeIds.isEmpty()) {
+      throw new IllegalArgumentException("At least one employee must be assigned");
+    }
+
+    // Assign the employees
+    appointment.setAssignedEmployeeIds(new HashSet<>(employeeIds));
+
+    // If appointment was PENDING, move it to CONFIRMED
+    if (appointment.getStatus() == AppointmentStatus.PENDING) {
+      appointment.setStatus(AppointmentStatus.CONFIRMED);
+    }
+
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+    log.info("Successfully assigned {} employees to appointment {}", employeeIds.size(), appointmentId);
+
+    // Notify the customer that employees have been assigned
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "INFO",
+        "Appointment Confirmed - Employees Assigned",
+        String.format("Your appointment (%s) has been confirmed. %d employee(s) have been assigned to your service.",
+            appointment.getConfirmationNumber(),
+            employeeIds.size()),
+        appointmentId
+    );
+
+    // Notify each assigned employee
+    for (String employeeId : employeeIds) {
+      notificationClient.sendAppointmentNotification(
+          employeeId,
+          "INFO",
+          "New Appointment Assignment",
+          String.format("You have been assigned to appointment %s for %s on %s",
+              appointment.getConfirmationNumber(),
+              appointment.getServiceType(),
+              appointment.getRequestedDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a"))),
+          appointmentId
+      );
+    }
+
+    return convertToDto(savedAppointment);
+  }
+
+  @Override
+  public AppointmentResponseDto acceptVehicleArrival(String appointmentId, String employeeId) {
+    log.info("Employee {} accepting vehicle arrival for appointment {}", employeeId, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    // Verify employee is assigned to this appointment
+    if (!appointment.getAssignedEmployeeIds().contains(employeeId)) {
+      throw new UnauthorizedAccessException("Employee is not assigned to this appointment");
+    }
+
+    // Verify appointment is in CONFIRMED status
+    if (appointment.getStatus() != AppointmentStatus.CONFIRMED) {
+      throw new IllegalStateException("Can only accept vehicle arrival for CONFIRMED appointments. Current status: " + appointment.getStatus());
+    }
+
+    // Update appointment with vehicle arrival info
+    appointment.setVehicleArrivedAt(LocalDateTime.now());
+    appointment.setVehicleAcceptedByEmployeeId(employeeId);
+    // Status will be set to IN_PROGRESS by clockIn() method
+
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+
+    // Use the new Clock In functionality to start time tracking
+    clockIn(appointmentId, employeeId);
+
+    // Notify customer that work has started
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "INFO",
+        "Work Started",
+        String.format("Your vehicle has arrived and work has started on your %s appointment (Confirmation: %s)",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    log.info("Vehicle arrival accepted. Appointment {} status changed to IN_PROGRESS", appointmentId);
+    return convertToDto(savedAppointment);
+  }
+
+  @Override
+  public AppointmentResponseDto completeWork(String appointmentId, String employeeId) {
+    log.info("Employee {} marking work as complete for appointment {}", employeeId, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    // Verify employee is assigned to this appointment
+    if (!appointment.getAssignedEmployeeIds().contains(employeeId)) {
+      throw new UnauthorizedAccessException("Employee is not assigned to this appointment");
+    }
+
+    // Verify appointment is in IN_PROGRESS status
+    if (appointment.getStatus() != AppointmentStatus.IN_PROGRESS) {
+      throw new IllegalStateException("Can only complete appointments in IN_PROGRESS status. Current status: " + appointment.getStatus());
+    }
+
+    // Update appointment status to COMPLETED
+    appointment.setStatus(AppointmentStatus.COMPLETED);
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+
+    // Notify customer that work is complete
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "SUCCESS",
+        "Work Completed",
+        String.format("Your %s service has been completed! (Confirmation: %s). Please proceed to payment.",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    // Notify admin about completion
+    // Note: In a real system, you'd fetch admin user IDs from a service
+    // For now, we'll just log it
+    log.info("Appointment {} marked as COMPLETED. Customer and admin should be notified for payment.", appointmentId);
+
+    return convertToDto(savedAppointment);
+  }
+
+  @Override
+  @Transactional
+  public TimeSessionResponse clockIn(String appointmentId, String employeeId) {
+    log.info("Clock in request - Appointment: {}, Employee: {}", appointmentId, employeeId);
+
+    // 1. Verify appointment exists and employee is assigned
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    if (!appointment.getAssignedEmployeeIds().contains(employeeId)) {
+      throw new UnauthorizedAccessException("Employee is not assigned to this appointment");
+    }
+
+    // 2. Check if there's already an active session
+    Optional<TimeSession> existingSession = timeSessionRepository
+        .findByAppointmentIdAndEmployeeIdAndActiveTrue(appointmentId, employeeId);
+    
+    if (existingSession.isPresent()) {
+      log.warn("Employee {} already has an active time session for appointment {}", employeeId, appointmentId);
+      return convertToTimeSessionResponse(existingSession.get());
+    }
+
+    // 3. Create time log entry in Time Logging Service (with 0 hours initially)
+    String timeLogId = timeLoggingClient.createTimeLog(
+        employeeId,
+        appointmentId,
+        String.format("Work on %s - %s", appointment.getServiceType(), appointment.getConfirmationNumber()),
+        0.0
+    );
+
+    log.info("Created time log in Time Logging Service with ID: {}", timeLogId);
+
+    // 4. Create TimeSession entity
+    TimeSession timeSession = new TimeSession();
+    timeSession.setAppointmentId(appointmentId);
+    timeSession.setEmployeeId(employeeId);
+    timeSession.setTimeLogId(timeLogId);
+    // clockInTime and active are set by @PrePersist
+
+    TimeSession savedSession = timeSessionRepository.save(timeSession);
+    log.info("Created time session with ID: {}", savedSession.getId());
+
+    // 5. Update appointment status to IN_PROGRESS
+    appointment.setStatus(AppointmentStatus.IN_PROGRESS);
+    appointmentRepository.save(appointment);
+    log.info("Updated appointment {} status to IN_PROGRESS", appointmentId);
+
+    // 6. Notify customer that work has started
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "INFO",
+        "Work Started",
+        String.format("Your %s service has started! (Confirmation: %s)",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    return convertToTimeSessionResponse(savedSession);
+  }
+
+  @Override
+  @Transactional
+  public TimeSessionResponse clockOut(String appointmentId, String employeeId) {
+    log.info("Clock out request - Appointment: {}, Employee: {}", appointmentId, employeeId);
+
+    // 1. Find active time session
+    TimeSession timeSession = timeSessionRepository
+        .findByAppointmentIdAndEmployeeIdAndActiveTrue(appointmentId, employeeId)
+        .orElseThrow(() -> new IllegalStateException(
+            "No active time session found for employee " + employeeId + " on appointment " + appointmentId));
+
+    // 2. Set clock out time
+    timeSession.setClockOutTime(LocalDateTime.now());
+    timeSession.setActive(false);
+
+    // 3. Calculate hours worked
+    Duration duration = Duration.between(timeSession.getClockInTime(), timeSession.getClockOutTime());
+    double hoursWorked = duration.toMinutes() / 60.0; // Convert to hours with decimal precision
+
+    log.info("Hours worked: {}", hoursWorked);
+
+    // 4. Update time log in Time Logging Service with actual hours
+    timeLoggingClient.updateTimeLog(
+        timeSession.getTimeLogId(),
+        hoursWorked,
+        String.format("Completed: %.2f hours worked", hoursWorked)
+    );
+
+    // 5. Save updated time session
+    TimeSession savedSession = timeSessionRepository.save(timeSession);
+    log.info("Clock out completed for time session ID: {}", savedSession.getId());
+
+    // 6. Update appointment status to COMPLETED
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+    
+    appointment.setStatus(AppointmentStatus.COMPLETED);
+    appointmentRepository.save(appointment);
+    log.info("Updated appointment {} status to COMPLETED", appointmentId);
+
+    // 7. Notify customer that work is complete
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "SUCCESS",
+        "Work Completed",
+        String.format("Your %s service has been completed! (Confirmation: %s). Total hours: %.2f. Please proceed to payment.",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber(),
+            hoursWorked),
+        appointmentId
+    );
+
+    return convertToTimeSessionResponse(savedSession);
+  }
+
+  @Override
+  public TimeSessionResponse getActiveTimeSession(String appointmentId, String employeeId) {
+    log.info("Getting active time session - Appointment: {}, Employee: {}", appointmentId, employeeId);
+
+    TimeSession timeSession = timeSessionRepository
+        .findByAppointmentIdAndEmployeeIdAndActiveTrue(appointmentId, employeeId)
+        .orElse(null);
+
+    if (timeSession == null) {
+      log.info("No active time session found");
+      return null;
+    }
+
+    return convertToTimeSessionResponse(timeSession);
+  }
+
+  private TimeSessionResponse convertToTimeSessionResponse(TimeSession session) {
+    TimeSessionResponse response = new TimeSessionResponse();
+    response.setId(session.getId());
+    response.setAppointmentId(session.getAppointmentId());
+    response.setEmployeeId(session.getEmployeeId());
+    response.setClockInTime(session.getClockInTime());
+    response.setClockOutTime(session.getClockOutTime());
+    response.setActive(session.isActive());
+
+    // Calculate elapsed time
+    if (session.isActive()) {
+      Duration duration = Duration.between(session.getClockInTime(), LocalDateTime.now());
+      response.setElapsedSeconds(duration.getSeconds());
+    } else if (session.getClockOutTime() != null) {
+      Duration duration = Duration.between(session.getClockInTime(), session.getClockOutTime());
+      response.setElapsedSeconds(duration.getSeconds());
+      response.setHoursWorked(duration.toMinutes() / 60.0);
+    }
+
+    return response;
+  }
+
+  @Override
+  public AppointmentResponseDto confirmCompletion(String appointmentId, String customerId) {
+    log.info("Customer {} confirming completion for appointment {}", customerId, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    // Verify the customer owns this appointment
+    if (!appointment.getCustomerId().equals(customerId)) {
+      throw new UnauthorizedAccessException("You do not have permission to confirm this appointment");
+    }
+
+    // Verify appointment is in COMPLETED status
+    if (appointment.getStatus() != AppointmentStatus.COMPLETED) {
+      throw new IllegalStateException(
+          "Can only confirm completion for COMPLETED appointments. Current status: " + appointment.getStatus());
+    }
+
+    // Update appointment status to CUSTOMER_CONFIRMED
+    appointment.setStatus(AppointmentStatus.CUSTOMER_CONFIRMED);
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+
+    // Notify customer confirmation
+    notificationClient.sendAppointmentNotification(
+        customerId,
+        "SUCCESS",
+        "Appointment Confirmed Complete",
+        String.format("You have confirmed completion of your %s appointment (Confirmation: %s). Thank you!",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    // Notify assigned employees that customer confirmed
+    for (String employeeId : appointment.getAssignedEmployeeIds()) {
+      notificationClient.sendAppointmentNotification(
+          employeeId,
+          "SUCCESS",
+          "Customer Confirmed Completion",
+          String.format("Customer has confirmed completion of appointment %s",
+              appointment.getConfirmationNumber()),
+          appointmentId
+      );
+    }
+
+    log.info("Appointment {} moved to CUSTOMER_CONFIRMED status", appointmentId);
+    return convertToDto(savedAppointment);
   }
 }

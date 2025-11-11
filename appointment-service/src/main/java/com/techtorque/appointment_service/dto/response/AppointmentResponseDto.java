@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.Set;
 
 @Data
 @Builder
@@ -16,7 +17,7 @@ public class AppointmentResponseDto {
   private String id;
   private String customerId;
   private String vehicleId;
-  private String assignedEmployeeId;
+  private Set<String> assignedEmployeeIds;
   private String assignedBayId;
   private String confirmationNumber;
   private String serviceType;
@@ -25,4 +26,8 @@ public class AppointmentResponseDto {
   private String specialInstructions;
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
+
+  // Vehicle arrival tracking
+  private LocalDateTime vehicleArrivedAt;
+  private String vehicleAcceptedByEmployeeId;
 }
