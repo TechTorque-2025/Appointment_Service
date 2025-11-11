@@ -6,6 +6,7 @@ import com.techtorque.appointment_service.entity.*;
 import com.techtorque.appointment_service.exception.*;
 import com.techtorque.appointment_service.repository.*;
 import com.techtorque.appointment_service.service.AppointmentService;
+import com.techtorque.appointment_service.service.ServiceTypeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,7 +20,7 @@ import java.util.stream.Collectors;
 public class AppointmentServiceImpl implements AppointmentService {
 
   private final AppointmentRepository appointmentRepository;
-  private final ServiceTypeRepository serviceTypeRepository;
+  private final ServiceTypeService serviceTypeService;
   private final ServiceBayRepository serviceBayRepository;
   private final BusinessHoursRepository businessHoursRepository;
   private final HolidayRepository holidayRepository;
@@ -30,14 +31,14 @@ public class AppointmentServiceImpl implements AppointmentService {
 
   public AppointmentServiceImpl(
       AppointmentRepository appointmentRepository,
-      ServiceTypeRepository serviceTypeRepository,
+      ServiceTypeService serviceTypeService,
       ServiceBayRepository serviceBayRepository,
       BusinessHoursRepository businessHoursRepository,
       HolidayRepository holidayRepository,
       com.techtorque.appointment_service.service.NotificationClient notificationClient,
       com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient) {
     this.appointmentRepository = appointmentRepository;
-    this.serviceTypeRepository = serviceTypeRepository;
+    this.serviceTypeService = serviceTypeService;
     this.serviceBayRepository = serviceBayRepository;
     this.businessHoursRepository = businessHoursRepository;
     this.holidayRepository = holidayRepository;
@@ -49,7 +50,11 @@ public class AppointmentServiceImpl implements AppointmentService {
   public AppointmentResponseDto bookAppointment(AppointmentRequestDto dto, String customerId) {
     log.info("Booking appointment for customer: {}", customerId);
 
-    ServiceType serviceType = serviceTypeRepository.findByNameAndActiveTrue(dto.getServiceType())
+    // Fetch service type from Admin Service (via ServiceTypeService)
+    List<ServiceTypeResponseDto> allServiceTypes = serviceTypeService.getAllServiceTypes(false);
+    ServiceTypeResponseDto serviceType = allServiceTypes.stream()
+        .filter(st -> st.getName().equals(dto.getServiceType()))
+        .findFirst()
         .orElseThrow(() -> new IllegalArgumentException("Invalid service type: " + dto.getServiceType()));
 
     validateAppointmentDateTime(dto.getRequestedDateTime(), serviceType.getEstimatedDurationMinutes());
