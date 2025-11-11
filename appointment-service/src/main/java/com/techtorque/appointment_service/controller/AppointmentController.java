@@ -225,4 +225,15 @@ public class AppointmentController {
     
     return ResponseEntity.ok(session);
   }
+
+  @Operation(summary = "Customer confirms completion of appointment (customer only)")
+  @PostMapping("/{appointmentId}/confirm-completion")
+  @PreAuthorize("hasRole('CUSTOMER')")
+  public ResponseEntity<AppointmentResponseDto> confirmCompletion(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String customerId) {
+
+    AppointmentResponseDto updated = appointmentService.confirmCompletion(appointmentId, customerId);
+    return ResponseEntity.ok(updated);
+  }
 }

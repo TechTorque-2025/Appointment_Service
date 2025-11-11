@@ -37,6 +37,8 @@ public interface AppointmentService {
 
   AppointmentResponseDto completeWork(String appointmentId, String employeeId);
 
+  AppointmentResponseDto confirmCompletion(String appointmentId, String customerId);
+
   // Time tracking methods
   TimeSessionResponse clockIn(String appointmentId, String employeeId);
 

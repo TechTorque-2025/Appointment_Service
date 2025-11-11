@@ -6,6 +6,7 @@ import com.techtorque.appointment_service.entity.*;
 import com.techtorque.appointment_service.exception.*;
 import com.techtorque.appointment_service.repository.*;
 import com.techtorque.appointment_service.service.AppointmentService;
+import com.techtorque.appointment_service.service.AppointmentStateTransitionValidator;
 import com.techtorque.appointment_service.service.ServiceTypeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class AppointmentServiceImpl implements AppointmentService {
   private final TimeSessionRepository timeSessionRepository;
   private final com.techtorque.appointment_service.service.NotificationClient notificationClient;
   private final com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient;
+  private final AppointmentStateTransitionValidator stateTransitionValidator;
 
   private static final int SLOT_INTERVAL_MINUTES = 30;
 
@@ -38,7 +40,8 @@ public class AppointmentServiceImpl implements AppointmentService {
       HolidayRepository holidayRepository,
       TimeSessionRepository timeSessionRepository,
       com.techtorque.appointment_service.service.NotificationClient notificationClient,
-      com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient) {
+      com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient,
+      AppointmentStateTransitionValidator stateTransitionValidator) {
     this.appointmentRepository = appointmentRepository;
     this.serviceTypeService = serviceTypeService;
     this.serviceBayRepository = serviceBayRepository;
@@ -47,6 +50,7 @@ public class AppointmentServiceImpl implements AppointmentService {
     this.timeSessionRepository = timeSessionRepository;
     this.notificationClient = notificationClient;
     this.timeLoggingClient = timeLoggingClient;
+    this.stateTransitionValidator = stateTransitionValidator;
   }
 
   @Override
@@ -945,5 +949,54 @@ public class AppointmentServiceImpl implements AppointmentService {
     }
 
     return response;
+  }
+
+  @Override
+  public AppointmentResponseDto confirmCompletion(String appointmentId, String customerId) {
+    log.info("Customer {} confirming completion for appointment {}", customerId, appointmentId);
+
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    // Verify the customer owns this appointment
+    if (!appointment.getCustomerId().equals(customerId)) {
+      throw new UnauthorizedAccessException("You do not have permission to confirm this appointment");
+    }
+
+    // Verify appointment is in COMPLETED status
+    if (appointment.getStatus() != AppointmentStatus.COMPLETED) {
+      throw new IllegalStateException(
+          "Can only confirm completion for COMPLETED appointments. Current status: " + appointment.getStatus());
+    }
+
+    // Update appointment status to CUSTOMER_CONFIRMED
+    appointment.setStatus(AppointmentStatus.CUSTOMER_CONFIRMED);
+    Appointment savedAppointment = appointmentRepository.save(appointment);
+
+    // Notify customer confirmation
+    notificationClient.sendAppointmentNotification(
+        customerId,
+        "SUCCESS",
+        "Appointment Confirmed Complete",
+        String.format("You have confirmed completion of your %s appointment (Confirmation: %s). Thank you!",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    // Notify assigned employees that customer confirmed
+    for (String employeeId : appointment.getAssignedEmployeeIds()) {
+      notificationClient.sendAppointmentNotification(
+          employeeId,
+          "SUCCESS",
+          "Customer Confirmed Completion",
+          String.format("Customer has confirmed completion of appointment %s",
+              appointment.getConfirmationNumber()),
+          appointmentId
+      );
+    }
+
+    log.info("Appointment {} moved to CUSTOMER_CONFIRMED status", appointmentId);
+    return convertToDto(savedAppointment);
   }
 }
