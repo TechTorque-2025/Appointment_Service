@@ -36,4 +36,11 @@ public interface AppointmentService {
   AppointmentResponseDto acceptVehicleArrival(String appointmentId, String employeeId);
 
   AppointmentResponseDto completeWork(String appointmentId, String employeeId);
+
+  // Time tracking methods
+  TimeSessionResponse clockIn(String appointmentId, String employeeId);
+
+  TimeSessionResponse clockOut(String appointmentId, String employeeId);
+
+  TimeSessionResponse getActiveTimeSession(String appointmentId, String employeeId);
 }

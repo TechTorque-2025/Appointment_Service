@@ -24,6 +24,7 @@ public class AppointmentServiceImpl implements AppointmentService {
   private final ServiceBayRepository serviceBayRepository;
   private final BusinessHoursRepository businessHoursRepository;
   private final HolidayRepository holidayRepository;
+  private final TimeSessionRepository timeSessionRepository;
   private final com.techtorque.appointment_service.service.NotificationClient notificationClient;
   private final com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient;
 
@@ -35,6 +36,7 @@ public class AppointmentServiceImpl implements AppointmentService {
       ServiceBayRepository serviceBayRepository,
       BusinessHoursRepository businessHoursRepository,
       HolidayRepository holidayRepository,
+      TimeSessionRepository timeSessionRepository,
       com.techtorque.appointment_service.service.NotificationClient notificationClient,
       com.techtorque.appointment_service.client.TimeLoggingClient timeLoggingClient) {
     this.appointmentRepository = appointmentRepository;
@@ -42,6 +44,7 @@ public class AppointmentServiceImpl implements AppointmentService {
     this.serviceBayRepository = serviceBayRepository;
     this.businessHoursRepository = businessHoursRepository;
     this.holidayRepository = holidayRepository;
+    this.timeSessionRepository = timeSessionRepository;
     this.notificationClient = notificationClient;
     this.timeLoggingClient = timeLoggingClient;
   }
@@ -728,15 +731,12 @@ public class AppointmentServiceImpl implements AppointmentService {
     // Update appointment with vehicle arrival info
     appointment.setVehicleArrivedAt(LocalDateTime.now());
     appointment.setVehicleAcceptedByEmployeeId(employeeId);
-    appointment.setStatus(AppointmentStatus.IN_PROGRESS);
+    // Status will be set to IN_PROGRESS by clockIn() method
 
     Appointment savedAppointment = appointmentRepository.save(appointment);
 
-    // Create time log entry to start tracking time
-    String description = String.format("Work started on %s for appointment %s",
-        appointment.getServiceType(),
-        appointment.getConfirmationNumber());
-    timeLoggingClient.startTimeLog(employeeId, appointmentId, description);
+    // Use the new Clock In functionality to start time tracking
+    clockIn(appointmentId, employeeId);
 
     // Notify customer that work has started
     notificationClient.sendAppointmentNotification(
@@ -791,5 +791,159 @@ public class AppointmentServiceImpl implements AppointmentService {
     log.info("Appointment {} marked as COMPLETED. Customer and admin should be notified for payment.", appointmentId);
 
     return convertToDto(savedAppointment);
+  }
+
+  @Override
+  @Transactional
+  public TimeSessionResponse clockIn(String appointmentId, String employeeId) {
+    log.info("Clock in request - Appointment: {}, Employee: {}", appointmentId, employeeId);
+
+    // 1. Verify appointment exists and employee is assigned
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+
+    if (!appointment.getAssignedEmployeeIds().contains(employeeId)) {
+      throw new UnauthorizedAccessException("Employee is not assigned to this appointment");
+    }
+
+    // 2. Check if there's already an active session
+    Optional<TimeSession> existingSession = timeSessionRepository
+        .findByAppointmentIdAndEmployeeIdAndActiveTrue(appointmentId, employeeId);
+    
+    if (existingSession.isPresent()) {
+      log.warn("Employee {} already has an active time session for appointment {}", employeeId, appointmentId);
+      return convertToTimeSessionResponse(existingSession.get());
+    }
+
+    // 3. Create time log entry in Time Logging Service (with 0 hours initially)
+    String timeLogId = timeLoggingClient.createTimeLog(
+        employeeId,
+        appointmentId,
+        String.format("Work on %s - %s", appointment.getServiceType(), appointment.getConfirmationNumber()),
+        0.0
+    );
+
+    log.info("Created time log in Time Logging Service with ID: {}", timeLogId);
+
+    // 4. Create TimeSession entity
+    TimeSession timeSession = new TimeSession();
+    timeSession.setAppointmentId(appointmentId);
+    timeSession.setEmployeeId(employeeId);
+    timeSession.setTimeLogId(timeLogId);
+    // clockInTime and active are set by @PrePersist
+
+    TimeSession savedSession = timeSessionRepository.save(timeSession);
+    log.info("Created time session with ID: {}", savedSession.getId());
+
+    // 5. Update appointment status to IN_PROGRESS
+    appointment.setStatus(AppointmentStatus.IN_PROGRESS);
+    appointmentRepository.save(appointment);
+    log.info("Updated appointment {} status to IN_PROGRESS", appointmentId);
+
+    // 6. Notify customer that work has started
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "INFO",
+        "Work Started",
+        String.format("Your %s service has started! (Confirmation: %s)",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber()),
+        appointmentId
+    );
+
+    return convertToTimeSessionResponse(savedSession);
+  }
+
+  @Override
+  @Transactional
+  public TimeSessionResponse clockOut(String appointmentId, String employeeId) {
+    log.info("Clock out request - Appointment: {}, Employee: {}", appointmentId, employeeId);
+
+    // 1. Find active time session
+    TimeSession timeSession = timeSessionRepository
+        .findByAppointmentIdAndEmployeeIdAndActiveTrue(appointmentId, employeeId)
+        .orElseThrow(() -> new IllegalStateException(
+            "No active time session found for employee " + employeeId + " on appointment " + appointmentId));
+
+    // 2. Set clock out time
+    timeSession.setClockOutTime(LocalDateTime.now());
+    timeSession.setActive(false);
+
+    // 3. Calculate hours worked
+    Duration duration = Duration.between(timeSession.getClockInTime(), timeSession.getClockOutTime());
+    double hoursWorked = duration.toMinutes() / 60.0; // Convert to hours with decimal precision
+
+    log.info("Hours worked: {}", hoursWorked);
+
+    // 4. Update time log in Time Logging Service with actual hours
+    timeLoggingClient.updateTimeLog(
+        timeSession.getTimeLogId(),
+        hoursWorked,
+        String.format("Completed: %.2f hours worked", hoursWorked)
+    );
+
+    // 5. Save updated time session
+    TimeSession savedSession = timeSessionRepository.save(timeSession);
+    log.info("Clock out completed for time session ID: {}", savedSession.getId());
+
+    // 6. Update appointment status to COMPLETED
+    Appointment appointment = appointmentRepository.findById(appointmentId)
+        .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found with ID: " + appointmentId));
+    
+    appointment.setStatus(AppointmentStatus.COMPLETED);
+    appointmentRepository.save(appointment);
+    log.info("Updated appointment {} status to COMPLETED", appointmentId);
+
+    // 7. Notify customer that work is complete
+    notificationClient.sendAppointmentNotification(
+        appointment.getCustomerId(),
+        "SUCCESS",
+        "Work Completed",
+        String.format("Your %s service has been completed! (Confirmation: %s). Total hours: %.2f. Please proceed to payment.",
+            appointment.getServiceType(),
+            appointment.getConfirmationNumber(),
+            hoursWorked),
+        appointmentId
+    );
+
+    return convertToTimeSessionResponse(savedSession);
+  }
+
+  @Override
+  public TimeSessionResponse getActiveTimeSession(String appointmentId, String employeeId) {
+    log.info("Getting active time session - Appointment: {}, Employee: {}", appointmentId, employeeId);
+
+    TimeSession timeSession = timeSessionRepository
+        .findByAppointmentIdAndEmployeeIdAndActiveTrue(appointmentId, employeeId)
+        .orElse(null);
+
+    if (timeSession == null) {
+      log.info("No active time session found");
+      return null;
+    }
+
+    return convertToTimeSessionResponse(timeSession);
+  }
+
+  private TimeSessionResponse convertToTimeSessionResponse(TimeSession session) {
+    TimeSessionResponse response = new TimeSessionResponse();
+    response.setId(session.getId());
+    response.setAppointmentId(session.getAppointmentId());
+    response.setEmployeeId(session.getEmployeeId());
+    response.setClockInTime(session.getClockInTime());
+    response.setClockOutTime(session.getClockOutTime());
+    response.setActive(session.isActive());
+
+    // Calculate elapsed time
+    if (session.isActive()) {
+      Duration duration = Duration.between(session.getClockInTime(), LocalDateTime.now());
+      response.setElapsedSeconds(duration.getSeconds());
+    } else if (session.getClockOutTime() != null) {
+      Duration duration = Duration.between(session.getClockInTime(), session.getClockOutTime());
+      response.setElapsedSeconds(duration.getSeconds());
+      response.setHoursWorked(duration.toMinutes() / 60.0);
+    }
+
+    return response;
   }
 }

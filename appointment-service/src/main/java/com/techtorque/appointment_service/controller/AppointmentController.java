@@ -187,4 +187,42 @@ public class AppointmentController {
     AppointmentResponseDto updated = appointmentService.completeWork(appointmentId, employeeId);
     return ResponseEntity.ok(updated);
   }
+
+  @Operation(summary = "Clock in to start time tracking for an appointment")
+  @PostMapping("/{appointmentId}/clock-in")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<TimeSessionResponse> clockIn(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    TimeSessionResponse session = appointmentService.clockIn(appointmentId, employeeId);
+    return ResponseEntity.ok(session);
+  }
+
+  @Operation(summary = "Clock out to stop time tracking for an appointment")
+  @PostMapping("/{appointmentId}/clock-out")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<TimeSessionResponse> clockOut(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    TimeSessionResponse session = appointmentService.clockOut(appointmentId, employeeId);
+    return ResponseEntity.ok(session);
+  }
+
+  @Operation(summary = "Get active time session for an appointment")
+  @GetMapping("/{appointmentId}/time-session")
+  @PreAuthorize("hasRole('EMPLOYEE')")
+  public ResponseEntity<TimeSessionResponse> getActiveTimeSession(
+          @PathVariable String appointmentId,
+          @RequestHeader("X-User-Subject") String employeeId) {
+
+    TimeSessionResponse session = appointmentService.getActiveTimeSession(appointmentId, employeeId);
+    
+    if (session == null) {
+      return ResponseEntity.noContent().build();
+    }
+    
+    return ResponseEntity.ok(session);
+  }
 }
