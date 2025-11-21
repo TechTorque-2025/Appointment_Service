@@ -198,7 +198,7 @@ class AppointmentServiceTest {
         // Given
         AppointmentRequestDto requestDto = AppointmentRequestDto.builder()
                 .serviceType("Oil Change")
-                .requestedDateTime(LocalDateTime.of(2024, 1, 15, 8, 0)) // Before opening
+                .requestedDateTime(LocalDateTime.of(2026, 1, 11, 8, 0)) // Sunday before opening
                 .build();
 
         when(serviceTypeService.getAllServiceTypes(false)).thenReturn(List.of(testServiceType));
@@ -215,7 +215,7 @@ class AppointmentServiceTest {
         // Given
         AppointmentRequestDto requestDto = AppointmentRequestDto.builder()
                 .serviceType("Oil Change")
-                .requestedDateTime(LocalDateTime.of(2024, 1, 15, 10, 0))
+                .requestedDateTime(LocalDateTime.of(2026, 1, 12, 10, 0))
                 .build();
 
         when(serviceTypeService.getAllServiceTypes(false)).thenReturn(List.of(testServiceType));
@@ -335,7 +335,7 @@ class AppointmentServiceTest {
         // Given
         testAppointment.setStatus(AppointmentStatus.IN_PROGRESS);
         AppointmentUpdateDto updateDto = AppointmentUpdateDto.builder()
-                .requestedDateTime(LocalDateTime.of(2024, 1, 16, 11, 0))
+                .requestedDateTime(LocalDateTime.of(2026, 1, 16, 11, 0))
                 .build();
 
         when(appointmentRepository.findByIdAndCustomerId("apt-1", "customer-1"))
@@ -481,7 +481,7 @@ class AppointmentServiceTest {
         verify(appointmentRepository, times(2)).save(any()); // Called twice: once in acceptVehicleArrival, once in
                                                              // clockIn
         verify(timeSessionRepository).save(any());
-        verify(notificationClient).sendAppointmentNotification(
+        verify(notificationClient, times(2)).sendAppointmentNotification(
                 eq("customer-1"), eq("INFO"), eq("Work Started"), any(), eq("apt-1"));
     }
 
