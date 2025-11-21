@@ -452,8 +452,6 @@ class AppointmentControllerTest {
         mockMvc.perform(post("/appointments/apt-1/clock-out")
                 .header("X-User-Subject", "employee-1")
                 .header("X-User-Roles", "EMPLOYEE")
-                .with(csrf()))r-Roles", "EMPLOYEE")
-                .with(csrf()))r-Roles", "EMPLOYEE")
                 .with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value("apt-1"));
