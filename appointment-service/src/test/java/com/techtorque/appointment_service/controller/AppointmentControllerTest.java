@@ -140,7 +140,7 @@ class AppointmentControllerTest {
         void listAppointments_Customer_Success() throws Exception {
                 // Given
                 List<AppointmentResponseDto> appointments = List.of(createTestAppointmentResponse());
-                when(appointmentService.getAppointmentsForUser("customer-1", "ROLE_CUSTOMER"))
+                when(appointmentService.getAppointmentsForUser("customer-1", "CUSTOMER"))
                                 .thenReturn(appointments);
 
                 // When & Then
@@ -152,7 +152,7 @@ class AppointmentControllerTest {
                                 .andExpect(jsonPath("$[0].id").value("apt-1"))
                                 .andExpect(jsonPath("$[0].customerId").value("customer-1"));
 
-                verify(appointmentService).getAppointmentsForUser("customer-1", "ROLE_CUSTOMER");
+                verify(appointmentService).getAppointmentsForUser("customer-1", "CUSTOMER");
         }
 
         @Test
@@ -168,7 +168,7 @@ class AppointmentControllerTest {
                 // When & Then
                 mockMvc.perform(get("/appointments")
                                 .header("X-User-Subject", "admin-1")
-                                .header("X-User-Roles", "ROLE_ADMIN")
+                                .header("X-User-Roles", "ADMIN")
                                 .param("vehicleId", "vehicle-1")
                                 .param("status", "PENDING")
                                 .param("fromDate", "2025-06-01")
@@ -187,7 +187,7 @@ class AppointmentControllerTest {
         void getAppointmentDetails_Success() throws Exception {
                 // Given
                 AppointmentResponseDto appointment = createTestAppointmentResponse();
-                when(appointmentService.getAppointmentDetails("apt-1", "customer-1", "ROLE_CUSTOMER"))
+                when(appointmentService.getAppointmentDetails("apt-1", "customer-1", "CUSTOMER"))
                                 .thenReturn(appointment);
 
                 // When & Then
@@ -198,7 +198,7 @@ class AppointmentControllerTest {
                                 .andExpect(jsonPath("$.id").value("apt-1"))
                                 .andExpect(jsonPath("$.customerId").value("customer-1"));
 
-                verify(appointmentService).getAppointmentDetails("apt-1", "customer-1", "ROLE_CUSTOMER");
+                verify(appointmentService).getAppointmentDetails("apt-1", "customer-1", "CUSTOMER");
         }
 
         @Test
@@ -251,20 +251,20 @@ class AppointmentControllerTest {
         @WithMockUser(authorities = "ROLE_CUSTOMER")
         void cancelAppointment_Success() throws Exception {
                 // Given
-                doNothing().when(appointmentService).cancelAppointment("apt-1", "customer-1", "ROLE_CUSTOMER");
+                doNothing().when(appointmentService).cancelAppointment("apt-1", "customer-1", "CUSTOMER");
 
                 // When & Then
                 mockMvc.perform(delete("/appointments/apt-1")
                                 .header("X-User-Subject", "customer-1")
-                                .header("X-User-Roles", "ROLE_CUSTOMER")
+                                .header("X-User-Roles", "CUSTOMER")
                                 .with(csrf()))
                                 .andExpect(status().isNoContent());
 
-                verify(appointmentService).cancelAppointment("apt-1", "customer-1", "ROLE_CUSTOMER");
+                verify(appointmentService).cancelAppointment("apt-1", "customer-1", "CUSTOMER");
         }
 
         @Test
-        @WithMockUser(authorities = "ROLE_EMPLOYEE")
+        @WithMockUser(authorities = "ROLE_ADMIN")
         void updateStatus_Success() throws Exception {
                 // Given
                 StatusUpdateDto statusUpdate = StatusUpdateDto.builder()
@@ -272,7 +272,7 @@ class AppointmentControllerTest {
                                 .build();
 
                 AppointmentResponseDto updatedResponse = createTestAppointmentResponse();
-                when(appointmentService.updateAppointmentStatus("apt-1", AppointmentStatus.CONFIRMED, "employee-1"))
+                when(appointmentService.updateAppointmentStatus("apt-1", AppointmentStatus.CONFIRMED, "admin-1"))
                                 .thenReturn(updatedResponse);
 
                 // When & Then
@@ -285,7 +285,7 @@ class AppointmentControllerTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.id").value("apt-1"));
 
-                verify(appointmentService).updateAppointmentStatus("apt-1", AppointmentStatus.CONFIRMED, "employee-1");
+                verify(appointmentService).updateAppointmentStatus("apt-1", AppointmentStatus.CONFIRMED, "admin-1");
         }
 
         @Test
@@ -450,7 +450,7 @@ class AppointmentControllerTest {
                                 .thenReturn(response);
 
                 // When & Then
-                mockMvc.perform(post("/appointments/apt-1/clock-out")
+                mockMvc.perform(post("/appointments/apt-1/complete")
                                 .header("X-User-Subject", "employee-1")
                                 .header("X-User-Roles", "EMPLOYEE")
                                 .with(csrf()))
