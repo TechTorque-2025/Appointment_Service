@@ -118,7 +118,7 @@ class AppointmentServiceTest {
         AppointmentRequestDto requestDto = AppointmentRequestDto.builder()
                 .vehicleId("vehicle-1")
                 .serviceType("Oil Change")
-                .requestedDateTime(LocalDateTime.of(2025, 6, 15, 10, 0)) // Future date
+                .requestedDateTime(LocalDateTime.of(2026, 6, 15, 10, 0)) // Future date
                 .specialInstructions("Please check tire pressure")
                 .build();
         when(serviceTypeService.getAllServiceTypes(false))
@@ -305,7 +305,7 @@ class AppointmentServiceTest {
     void updateAppointment_Success() {
         // Given
         AppointmentUpdateDto updateDto = AppointmentUpdateDto.builder()
-                .requestedDateTime(LocalDateTime.of(2025, 6, 16, 11, 0)) // Future date
+                .requestedDateTime(LocalDateTime.of(2026, 6, 16, 11, 0)) // Future date
                 .specialInstructions("Updated instructions")
                 .build();
         when(appointmentRepository.findByIdAndCustomerId("apt-1", "customer-1"))
