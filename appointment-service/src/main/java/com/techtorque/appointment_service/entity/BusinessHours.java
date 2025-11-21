@@ -23,7 +23,7 @@ public class BusinessHours {
   @GeneratedValue(strategy = GenerationType.UUID)
   private String id;
 
-  @Enumerated(EnumType.STRING)
+  @Enumerated(EnumType.ORDINAL)
   @Column(nullable = false)
   private DayOfWeek dayOfWeek;
 
