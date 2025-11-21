@@ -23,7 +23,9 @@ public class BusinessHours {
   @GeneratedValue(strategy = GenerationType.UUID)
   private String id;
 
-  @Enumerated(EnumType.ORDINAL)
+  // store DayOfWeek as STRING (e.g. "MONDAY") to match production database column type
+  // using STRING avoids numeric/ordinal mismatches across different DB schemas
+  @Enumerated(EnumType.STRING)
   @Column(nullable = false)
   private DayOfWeek dayOfWeek;
 

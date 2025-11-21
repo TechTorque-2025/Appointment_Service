@@ -26,10 +26,10 @@ CREATE TABLE service_bays (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Business Hours table (DayOfWeek as INTEGER: MONDAY=1, TUESDAY=2, etc.)
+-- Business Hours table (DayOfWeek as VARCHAR: MONDAY, TUESDAY, etc.)
 CREATE TABLE business_hours (
     id VARCHAR(255) PRIMARY KEY,
-    day_of_week INTEGER NOT NULL,
+    day_of_week VARCHAR(10) NOT NULL,
     open_time TIME,
     close_time TIME,
     break_start_time TIME,
