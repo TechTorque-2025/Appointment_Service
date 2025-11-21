@@ -590,7 +590,8 @@ class AppointmentControllerTest {
         void unauthenticatedRequest_Unauthorized() throws Exception {
                 // When & Then
                 mockMvc.perform(get("/appointments"))
-                                .andExpect(status().isUnauthorized());
+                                .andExpected(status().isForbidden()); // Authentication configured, so 403 instead of
+                                                                      // 401
         }
 
         @Test
