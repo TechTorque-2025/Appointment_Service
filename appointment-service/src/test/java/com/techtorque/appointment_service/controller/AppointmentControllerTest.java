@@ -612,6 +612,6 @@ class AppointmentControllerTest {
                                 .header("X-User-Roles", "ROLE_ADMIN")
                                 .param("year", "2025")
                                 .param("month", "13")) // Invalid month
-                                .andExpected(status().isInternalServerError()); // DateTimeException results in 500
+                                .andExpect(status().isInternalServerError()); // DateTimeException results in 500
         }
 }
